@@ -13,43 +13,37 @@
 
 # =============================================================================================
  
-import sys, os, stat, urllib               # basics
-import pickle
-
-import threading
-
-print("Initializing metadata-on-nautilus [Python " + sys.version.partition(' (')[0] + "]")
+import sys, os
+from threading import Thread, activeCount, Lock
+from datetime import datetime
+from time import sleep
+from urllib import unquote
+from pickle import dump, load, HIGHEST_PROTOCOL
+if (sys.version[0] <= '2'): 
+    pythonIs2OrOlder = True
+    import Queue as queue
+else: 
+    pythonIs2OrOlder = False
+    import queue as queue
 
 from gi import require_version       # Nautilus stuff
 require_version("Gtk", "3.0")        # 
 require_version('Nautilus', '3.0')   # ...
-from gi.repository import Nautilus, GObject, Gtk, GdkPixbuf
+from gi.repository import GLib, Nautilus, GObject, Gtk
+GLib.threads_init()
+GObject.threads_init()
 
 import lxml.html                     # for reading XML/HTML
 
 from PIL import Image                # for reading image
 import pyexiv2                       # for reading EXIF metadata
 
-import mutagen.aac                   # for reading ADTS/ADIF AAC (.aac)
-import mutagen.aiff                  # for reading AIFF (.aif, .aiff, ...)
-import mutagen.apev2                 # for reading APEv2 metadata
-import mutagen.asf                   # for reading ASF (.wmv, .wma, ...)
-import mutagen.flac                  # for reading FLAC
-import mutagen.id3                   # for reading ID3 metadata
-import mutagen.monkeysaudio          # for reading Monkey's Audio (.ape)
-import mutagen.mp3                   # for reading MPEG (.mp2, .mp3, ...)
-import mutagen.mp4                   # for reading MP4 (.mp4, .m4a, .m4b, ...)
-import mutagen.musepack              # for reading Musepack (.mpc, .mp+, ...)
-import mutagen.oggflac               # for reading Ogg FLAC
-import mutagen.oggopus               # for reading Ogg Opus
-import mutagen.oggspeex              # for reading Ogg Speex
-import mutagen.oggvorbis             # for reading Ogg Vorbis
-import mutagen.oggtheora             # for reading Ogg Theora
-import mutagen.optimfrog             # for reading OptimFROG (.ofr, .ofs, ...)
-import mutagen.trueaudio             # for reading TrueAudio (.tta)
-import mutagen.wavpack               # for reading WavPack (.wv)
-from enzyme import MKV              
 from pymediainfo import MediaInfo
+import mutagen.asf, mutagen.flac, mutagen.mp4
+import mutagen.id3, mutagen.mp3, mutagen.aac, mutagen.aiff, mutagen.dsf, mutagen.trueaudio
+import mutagen.oggflac, mutagen.oggopus, mutagen.oggspeex, mutagen.oggvorbis, mutagen.oggtheora
+import mutagen.apev2, mutagen.monkeysaudio, mutagen.musepack, mutagen.optimfrog, mutagen.wavpack
+# midi
 
 from PyPDF2 import PdfFileReader     # for reading PDF
 from ebooklib import epub            # for reading EPUB
@@ -58,14 +52,15 @@ from torrentool.api import Torrent
 
 # =============================================================================================
 
-kbps = " kbps"
-Hz = " Hz"
 placeholder = "-"
+minNonBlankFieldsToCache = 3
+minFilesToCache = 25
+maxThreads = 4 # from multiprocessing import cpu_count # maybe?
 
 # =============================================================================================
 
 class fileMetadata():
-    def __init__(self):
+    def __init__( self ):
         self.album = placeholder
         self.artist = placeholder
         self.author = placeholder
@@ -83,55 +78,115 @@ class fileMetadata():
         self.width = placeholder
         self.year = placeholder
         self.exif_flash = placeholder
+    
+    def nonBlankFields( self ):
+        nonBlankCount = 0
+        if self.album != placeholder: nonBlankCount += 1
+        if self.artist != placeholder: nonBlankCount += 1
+        if self.author != placeholder: nonBlankCount += 1
+        if self.bitrate != placeholder: nonBlankCount += 1
+        if self.camera != placeholder: nonBlankCount += 1
+        if self.comment != placeholder: nonBlankCount += 1
+        if self.date != placeholder: nonBlankCount += 1
+        if self.duration != placeholder: nonBlankCount += 1
+        if self.genre != placeholder: nonBlankCount += 1
+        if self.height != placeholder: nonBlankCount += 1
+        if self.pages != placeholder: nonBlankCount += 1
+        if self.samplerate != placeholder: nonBlankCount += 1
+        if self.title != placeholder: nonBlankCount += 1
+        if self.tracknumber != placeholder: nonBlankCount += 1
+        if self.width != placeholder: nonBlankCount += 1
+        if self.year != placeholder: nonBlankCount += 1
+        if self.exif_flash != placeholder: nonBlankCount += 1
+        return nonBlankCount
 
 # =============================================================================================
 
-class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvider):
+class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvider ):
 
-    cacheFile = os.getenv("HOME") + '/.cache/metadata-on-nautilus/known-metadata'
-
-    def __init__(self):
-        if os.path.exists(self.cacheFile) and os.path.isfile(self.cacheFile):
-            with open(self.cacheFile, 'rb') as cacheHandle:
-                self.knownFiles = pickle.load(cacheHandle)
-        else:
-            self.knownFiles = dict()
-        
-    def __del__(self):
-        if not os.path.exists(self.cacheFile) or os.path.isfile(self.cacheFile):
-            with open(self.cacheFile, 'wb') as cacheHandle:
-                pickle.dump(self.knownFiles, cacheHandle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def _formatedDuration(self, secs):
-        return "%02i:%02i:%02i" % ((int(secs/3600)), (int(secs/60%60)), (int(secs%60)))
-        
-    def _formatedTrackNumber(self, tracknumberstring):
-        pos = 0
-        for c in tracknumberstring:
-            if (c > '9') or (c < '0'): break
-            pos += 1
-        if pos == 0: return placeholder
-        elif pos == 1: return '0' + tracknumberstring[0]
-        return tracknumberstring[:pos]
-        
-    def _formatedBitrate(self, bitratestring):
-        finalstring = ''
-        for c in bitratestring:
-            if (c > '9') or (c < '0'): finalstring += c
-        return (finalstring + kbps)
-        
-    def _formatedDate(self, datestring):
-        size = len(datestring)
-        if (size >= 10): return datestring[:10]
-        elif (size == 4): return datestring + '-??-??'
-        elif (size == 7): return datestring + '-??'
-        else: return placeholder
+    def _logMessage( self, message ):
+        sys.stdout.write("Metanautilus: ")
+        now = datetime.now()
+        prettyTime = ("{:%H:%M:%S.}".format(now) + str(now.microsecond * 1000))[:12]
+        sys.stdout.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     
-    def _fetchTorrentMetadata(self, metadata, path):
+    def _pickleKnownMetadata( self, cacheFile ):
+        self._logMessage("Pickling currently known metadata...")
+        self._mutex.acquire()
+        if not os.path.exists(cacheFile) or os.path.isfile(cacheFile):
+            with open(cacheFile, 'wb') as cacheHandle:
+                dump(self.knownFiles, cacheHandle, protocol=HIGHEST_PROTOCOL)
+        self.unpickledKnownFiles = 0
+        self._mutex.release()
+
+    def _keepKnownMetadataPickled( self, cacheFile ):
+        cycle = 0
+        sleep(3)
+        while True:
+            if (self.unpickledKnownFiles > 0):
+                if not os.path.exists(cacheFile): # clear cache if cache file is deleted
+                    self._logMessage("Forgetting everything (metadata pickle file removed)...")
+                    self._mutex.acquire()
+                    self.knownFiles = dict()
+                    self.unpickledKnownFiles = 0
+                    self._mutex.release()
+                    with open(cacheFile, 'a'): pass
+                elif (self.unpickledKnownFiles > minFilesToCache) or ((cycle % 10) == 0): 
+                    self._pickleKnownMetadata(cacheFile)
+            cycle += 1
+            sleep(15)
+            
+    def _rememberMetadata( self, metadata, fileStatus ):
+        self._mutex.acquire()
+        self.knownFiles[fileStatus.st_ino] = (fileStatus.st_mtime, metadata)
+        self.unpickledKnownFiles += 1
+        self._mutex.release()
+        
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
+    def _formatedDate( self, dateString ):
+        size = len(dateString)
+        if (size >= 10): return dateString[:10]
+        elif (size == 4): return dateString + '-??-??'
+        elif (size == 7): return dateString + '-??'
+        else: return placeholder
+
+    def _formatedDuration( self, secs ):
+        return '%02i:%02i:%02i' % ((int(secs/3600)), (int(secs/60%60)), (int(secs%60)))
+        
+    def _formatedList( self, stringList ):
+        try:
+            if len(stringList) == 1: return str(stringList[0]).replace('\x00', '').replace('\n', '')
+            elif len(stringList) == 0: return placeholder
+            finalString = ''
+            for item in stringList: finalString += str(item) + '; '
+            return finalString.replace('\x00', r'').replace('\n', r'')[:-1]
+        except TypeError:
+            return str(stringList)
+        
+    def _formatedNumber( self, numberString ):
+        finalString = ''
+        for c in numberString:
+            if (c > '9') or (c < '0'): finalString += c
+        return finalString
+        
+    def _formatedString( self, anyString ):
+        return str(anyString).replace('\x00', r'').replace('\n', r'')
+        
+    def _formatedTrackNumber( self, trackNumberString ):
+        pos = 0
+        for c in trackNumberString:
+            if (c > '9') or (c < '0'): break
+            pos += 1
+        if pos == 0: return placeholder
+        elif pos == 1: return '0' + trackNumberString[0]
+        return trackNumberString[:pos]
+        
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    
+    def _fetchTorrentMetadata( self, metadata, path ):
         try: torrent = Torrent.from_file(path)
         except: return
         if torrent.created_by is not None: metadata.author = torrent.created_by
@@ -141,53 +196,48 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
         if torrent.comment is not None: metadata.comment = torrent.comment
         if torrent.name is not None: metadata.title = torrent.name
     
-    def _fetchXMLMetadata(self, metadata, path, mime):
+    def _fetchXMLMetadata( self, metadata, path, mime ):
         try: xml = lxml.html.parse(path)
         except: return
         title = xml.find(".//title")
         if title is None: title = xml.find(".//name")
         if title is not None: metadata.title = title.text
         
-    def get_pdf_info(self, metadata, path):
+    def get_pdf_info( self, metadata, path ):
         with open(path, 'rb') as documentfile:
-            try: 
-                document = PdfFileReader(documentfile)
-                try: metadata.pages = str(document.getNumPages())
-                except: pass
-                try: 
-                    info = document.getDocumentInfo()
-                    metadata.author = info['/Author']
-                    metadata.title = info['/Title']
-                except:
-                    pass
-            except:
-                pass
+            try: document = PdfFileReader(documentfile)
+            except: return
+            if document.isEncrypted: return
+            try: metadata.pages = str(document.getNumPages())
+            except: pass
+            try: info = document.documentInfo()
+            except: return
+            metadata.author = info.get('/Author', placeholder)
+            metadata.title = info.get('/Title', placeholder)
 
-    def get_epub_info(self, metadata, path):
+    def get_epub_info( self, metadata, path ):
         try: document = epub.read_epub(path)
-        except Exception as e: print(e)
-        print("EPUB: " + path)
-        print(document)
+        except Exception as e: sys.stderr.write(str(e))
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readOgg(self, metadata, path, mime):
+    def _readOgg( self, metadata, path, mime ):
         #TODO: overcome lack of support for those info by mutagen for opus, flac and theora
         mimedetail = mime[8:-4]
         if mimedetail == 'opus': # audio/x-opus+ogg
             av = mutagen.oggopus.OggOpus(path)
         elif mime.startswith('v'): # video/ogg, video/x-theora+ogg
             av = mutagen.oggtheora.OggTheora(path)
-            try: metadata.bitrate = str(av.info.bitrate/1000) + kbps
+            try: metadata.bitrate = str(av.info.bitrate/1000)
             except: pass
         else:
             if mimedetail == 'flac': av = mutagen.oggflac.OggFLAC(path) # audio/x-flac+ogg
             else:
                 if mimedetail == 'speex': av = mutagen.oggspeex.OggSpeex(path) # audio/x-speex+ogg
                 else: av = mutagen.oggvorbis.OggVorbis(path) # audio/x-vorbis+ogg
-                try: metadata.bitrate = str(av.info.bitrate/1000) + kbps
+                try: metadata.bitrate = str(av.info.bitrate/1000)
                 except: pass
-            try: metadata.samplerate = str(av.info.sample_rate) + Hz
+            try: metadata.samplerate = str(av.info.sample_rate)
             except: pass
         try: metadata.duration = self._formatedDuration(av.info.length)
         except: pass
@@ -203,41 +253,37 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readASF(self, metadata, file):
+    def _readASF( self, metadata, file ):
         try: av = mutagen.asf.ASF(file)
         except: return
-        print("ASF YEAH")
-        print(av)
-        try: metadata.album = av.tags.__getitem__('WM/AlbumTitle')
-        except: pass
-        try: metadata.artist = av['g_wszWMAuthor'][0]
-        except Exception as e: print("problema com Artist: " + str(e))
-        print(av['WM/Genre'][0])
-        try: metadata.genre = av['WM/Genre'].__str__()
-        except: pass
-        try: metadata.title = av['Title'][0]
-        except: pass
-        try: metadata.tracknumber = self._formatedTrackNumber(av['WM/TrackNumber'][0])
-        except: pass
-        try: metadata.year = av['Year'][0]
-        except: pass
-        try: metadata.bitrate = str(av.info.bitrate/1000) + kbps
-        except: pass
-        try: metadata.samplerate = str(av.info.sample_rate) + Hz
-        except: pass
-        try: metadata.duration = self._formatedDuration(av.info.length)
-        except: pass
+        metadata.album = self._formatedString(av.get('WM/AlbumTitle', [placeholder])[0])
+        metadata.artist = self._formatedString(av.get('g_wszWMAuthor', [placeholder])[0])
+        author = av.get('WM/Composer')
+        if author is None: author = av.get('WM/Writer')
+        if author is not None: metadata.author = self._formatedList(author)
+        metadata.bitrate = str(av.info.bitrate / 1000)
+        metadata.comment = self._formatedList(av.get('Description', [placeholder]))
+        metadata.duration = self._formatedDuration(av.info.length)
+        metadata.genre = self._formatedString(av.get('WM/Genre', [placeholder])[0])
+        metadata.samplerate = str(av.info.sample_rate)
+        metadata.title = self._formatedString(av.get('Title', [placeholder])[0])
+        tracknumber = self._formatedString(av.get('WM/TrackNumber', [placeholder])[0])
+        metadata.tracknumber = self._formatedTrackNumber(tracknumber)
+        date = self._formatedString(av.get('WM/Year', [placeholder])[0])[:10]
+        metadata.date = self._formatedDate(date)
+        metadata.year = date[:4]
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readID3(self, metadata, file):
+    def _readID3( self, metadata, file ):
         try: audio = mutagen.id3.ID3(file)
         except: return
         metadata.album = audio.get('TALB', [placeholder])[0]
         metadata.artist = audio.get('TPE1', [placeholder])[0]
-        composer = audio.get('TCOM')
-        if composer is None: composer = audio.get('TEXT')
-        if composer is not None: metadata.author = composer[0]
+        author = audio.get('TCOM')
+        if author is None: author = audio.get('TEXT')
+        if author is not None: metadata.author = self._formatedList(author)
+        #metadata.comment = 
         metadata.genre = audio.get('TCON', [placeholder])[0]
         metadata.title = audio.get('TIT2', [placeholder])[0]
         metadata.tracknumber = self._formatedTrackNumber(audio.get('TRCK', [placeholder])[0])
@@ -249,37 +295,37 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readMP4(self, metadata, file):
+    def _readMP4( self, metadata, file ):
         try: av = mutagen.mp4.MP4(file)
         except: return    
         metadata.album = av.get('\xA9alb', [placeholder])[0]
         metadata.artist = av.get('\xA9ART', [placeholder])[0]
-        metadata.author = av.get('\xA9wrt', [placeholder])[0]
-        metadata.bitrate = str(av.info.bitrate / 1000) + kbps
+        metadata.author = self._formatedList(av.get('\xA9wrt', [placeholder]))
+        metadata.bitrate = str(av.info.bitrate / 1000)
         metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
         metadata.duration = self._formatedDuration(av.info.length)
         metadata.genre = av.get('\xA9gen', [placeholder])[0]
-        metadata.samplerate = str(av.info.sample_rate) + Hz
+        metadata.samplerate = str(av.info.sample_rate)
         metadata.title = av.get('\xA9nam', [placeholder])[0]
         metadata.tracknumber = self._formatedTrackNumber(str(av.get('trkn', [[None]])[0][0]))
         metadata.year = av.get('\xA9day', [placeholder])[0][:4]
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readFLAC(self, metadata, fileObject):
+    def _readFLAC( self, metadata, fileObject ):
         try: audio = mutagen.flac.FLAC(fileObject)
         except: return
         metadata.album = audio.get('ALBUM', [placeholder])[0]
         metadata.artist = audio.get('ARTIST', [placeholder])[0]
-        composer = audio.get('COMPOSER')
-        if composer is None: 
-            composer = audio.get('LYRICIST')
-            if composer is None: composer = audio.get('WRITER')
-        if composer is not None: metadata.author = composer[0]
-        metadata.bitrate = str(audio.info.bitrate / 1000) + kbps
+        author = audio.get('COMPOSER')
+        if author is None: 
+            author = audio.get('LYRICIST')
+            if author is None: author = audio.get('WRITER')
+        if author is not None: metadata.author = self._formatedList(author)
+        metadata.bitrate = str(audio.info.bitrate / 1000)
         metadata.duration = self._formatedDuration(audio.info.length)
         metadata.genre = audio.get('GENRE', [placeholder])[0]
-        metadata.samplerate = str(audio.info.sample_rate) + Hz
+        metadata.samplerate = str(audio.info.sample_rate)
         metadata.title = audio.get('TITLE', [placeholder])[0]
         metadata.tracknumber = self._formatedTrackNumber(audio.get('TRACKNUMBER', [placeholder])[0])
         date = audio.get('DATE', [placeholder])[0][:10]
@@ -288,30 +334,42 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readAPE(self, metadata, file):
-        try: audio = mutagen.apev2.APEv2(file)
-        except: return
+    def _readAPEv2( self, metadata, file, signature ):
+        audio = None
+        try: 
+            if signature.startswith(b'MAC'): audio = mutagen.monkeysaudio.MonkeysAudio(file)
+            elif signature.startswith(b'MPCK'): audio = mutagen.musepack.Musepack(file)
+            elif signature.startswith(b'OFR'): audio = mutagen.optimfrog.OptimFROG(file)
+            knownFileType = True
+        except mutagen.MutagenError:
+            try: audio = mutagen.apev2.APEv2(file)
+            except: return
+            knownFileType = False
         metadata.album = audio.get('Album', [placeholder])[0]
         metadata.artist = audio.get('Artist', [placeholder])[0]
-        composer = audio.get('Composer')
-        if composer is None: 
-            composer = audio.get('Lyricist')
-            if composer is None: composer = audio.get('Writer')
-        if composer is not None: metadata.author = composer[0]
+        author = audio.get('Composer')
+        if author is None: 
+            author = audio.get('Lyricist')
+            if author is None: author = audio.get('Writer')
+        if author is not None: metadata.author = self._formatedList(author)
+        metadata.comment = audio.get('Comment', [placeholder])[0]
         metadata.genre = audio.get('Genre', [placeholder])[0]
         metadata.title = audio.get('Title', [placeholder])[0]
         metadata.tracknumber = self._formatedTrackNumber(audio.get('Track', [placeholder])[0])
         date = audio.get('Year', [placeholder])[0][:10]
         metadata.date = self._formatedDate(date)
         metadata.year = date[:4]
+        if knownFileType:
+            metadata.samplerate = str(audio.info.sample_rate)
+            metadata.duration = self._formatedDuration(audio.info.length)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readUnknownAVFormat(self, metadata, path, basicInformationOnly = False):
+    def _readUnknownAVFormat( self, metadata, path, basicInformationOnly = False ):
         try: av = MediaInfo.parse(path)
         except: return
         if av.tracks[0].overall_bit_rate is not None: 
-            metadata.bitrate = str(int(av.tracks[0].overall_bit_rate / 1000)) + kbps
+            metadata.bitrate = str(int(av.tracks[0].overall_bit_rate / 1000))
         if av.tracks[0].other_duration is not None: 
             metadata.duration = av.tracks[0].other_duration[3][:8]
         elif av.tracks[0].duration is not None: 
@@ -321,12 +379,14 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
                 if track.width is not None: metadata.width = str(track.width)
                 if track.height is not None: metadata.height = str(track.height)
             elif track.track_type[0] == 'A':
-                if track.sampling_rate is not None: metadata.samplerate = str(track.sampling_rate) + Hz
+                if track.sampling_rate is not None: metadata.samplerate = str(track.sampling_rate)
             elif track.track_type[0] != 'G': break
         if basicInformationOnly: return
         if av.tracks[0].album is not None: metadata.album = av.tracks[0].album
         if av.tracks[0].director is not None: metadata.author = av.tracks[0].director
         if av.tracks[0].performer is not None: metadata.artist = av.tracks[0].performer
+        if av.tracks[0].comment is not None: metadata.comment = av.tracks[0].comment
+        if av.tracks[0].genre is not None: metadata.genre = av.tracks[0].genre
         if av.tracks[0].movie_name is not None: metadata.title = av.tracks[0].title
         elif av.tracks[0].track_name is not None: metadata.title = av.tracks[0].track_name
         elif av.tracks[0].title is not None: metadata.title = av.tracks[0].title
@@ -335,7 +395,7 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _fetchAVMetadata(self, metadata, path, mime):
+    def _fetchAVMetadata( self, metadata, path, mime ):
         isVideo = mime[0] == 'v'
         with open(path, 'rb') as avfile:
             filesig = avfile.read(8)
@@ -343,7 +403,7 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
             filetail = avfile.read(8)
             avfile.seek(0)
             if filesig.startswith(b'ID3'): self._readID3(metadata, avfile)
-            elif filetail == b'APETAGEX': self._readAPE(metadata, avfile)
+            elif filetail == b'APETAGEX': self._readAPEv2(metadata, avfile, filesig)
             else:
                 if filesig.endswith(b'ftyp') and not isVideo: self._readMP4(metadata, avfile)
                 elif filesig.startswith(b'0&\xB2u'): self._readASF(metadata, avfile)
@@ -353,30 +413,30 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
                 return
             #if mime.endswith(('/mpeg', 'mp2')): # audio/mpeg, audio/x-mp2
             #    info = mutagen.mp3.MPEGInfo(avfile)
-            #    metadata.bitrate = str(info.bitrate/1000) + kbps
+            #    metadata.bitrate = str(info.bitrate/1000)
             #elif mime.endswith('/aac'): # audio/aac
             #    info = mutagen.aac.AACInfo(avfile)
-            #    metadata.bitrate = str(info.bitrate/1000) + kbps
-            #elif mime.endswith('musepack'): # audio/x-musepack
-            #    info = mutagen.musepack.MusepackInfo(avfile)
-            #    metadata.bitrate = str(info.bitrate/1000) + kbps
+            #    metadata.bitrate = str(info.bitrate/1000)
+                #elif mime.endswith('musepack'): # audio/x-musepack
+                #    info = mutagen.musepack.MusepackInfo(avfile)
+            #    metadata.bitrate = str(info.bitrate/1000)
             #elif mime.endswith('aiff'): # audio/x-aiff
             #    info = mutagen.aiff.AIFFInfo(avfile)
-            #    metadata.bitrate = str(info.bitrate/1000) + kbps
-            #elif mime.endswith('/x-ape'): # audio/x-ape
-            #    info = mutagen.monkeysaudio.MonkeysAudioInfo(avfile)
+            #    metadata.bitrate = str(info.bitrate/1000)
+                #elif mime.endswith('/x-ape'): # audio/x-ape
+                #    info = mutagen.monkeysaudio.MonkeysAudioInfo(avfile)
             #elif mime.endswith('wavpack'): # audio/x-wavpack
             #    info = mutagen.wavpack.WavPackInfo(avfile)
             #elif mime.endswith('x-tta'): # audio/x-tta
             #    info = mutagen.trueaudio.TrueAudioInfo(avfile)
-            #elif path.endswith(('.ofr', '.ofs')): # OptimFROG (no MIME)
-            #    info = mutagen.optimfrog.OptimFROGInfo(avfile)
-            #metadata.samplerate = str(info.sample_rate) + Hz
+                #elif path.endswith(('.ofr', '.ofs')): # OptimFROG (no MIME)
+                #    info = mutagen.optimfrog.OptimFROGInfo(avfile)
+            #metadata.samplerate = str(info.sample_rate)
             #metadata.duration = self._formatedDuration(info.length)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _fetchImageMetadata(self, metadata, path, mime):
+    def _fetchImageMetadata( self, metadata, path, mime ):
         try:
             image = pyexiv2.ImageMetadata(path)
             image.read()
@@ -400,83 +460,41 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def get_columns(self):
-        return (
-            Nautilus.Column(name='NautilusPython::inode_col',        attribute='inode',
-                label="Index Node",         description="Index Node of the file"),
-            Nautilus.Column(name='NautilusPython::album_col',        attribute='album',
-                label="Album",              description="The album the work is part of"),
-            Nautilus.Column(name='NautilusPython::artist_col',       attribute='artist',
-                label="Artist",             description="Artist of the work"),
-            Nautilus.Column(name='NautilusPython::author_col',       attribute='author',
-                label="Author",             description="Author of the work"),
-            Nautilus.Column(name='NautilusPython::bitrate_col',      attribute='bitrate',
-                label="Bit Rate",           description="Overall bitrate"),
-            Nautilus.Column(name='NautilusPython::camera_col',       attribute='camera',
-                label="Camera Model",       description="Camera model used to take the picture"),
-            Nautilus.Column(name='NautilusPython::comment_col',      attribute='comment',
-                label="Comment",            description="Comment"),
-            Nautilus.Column(name='NautilusPython::date_col',         attribute='date',
-                label="Date",               description="Year, Month and Day"),
-            Nautilus.Column(name='NautilusPython::dimensions_col',   attribute='dimensions',
-                label="Dimensions",         description="Actual pixel dimensions"),
-            Nautilus.Column(name='NautilusPython::duration_col',     attribute='duration',
-                label="Duration",           description="Audio or video duration"),
-            Nautilus.Column(name='NautilusPython::exif_flash_col',   attribute='exif_flash',
-                label="Flash (EXIF)",       description="Flash mode (EXIF)"),
-            Nautilus.Column(name='NautilusPython::genre_col',        attribute='genre',
-                label="Genre",              description="Genre of the work"),
-            Nautilus.Column(name='NautilusPython::height_col',       attribute='height',
-                label="Height",             description="Actual pixel height"),
-            Nautilus.Column(name='NautilusPython::pages_col',        attribute='pages',
-                label="Pages",              description="Page count of the document"),
-            Nautilus.Column(name='NautilusPython::samplerate_col',   attribute='samplerate',
-                label="Sample Rate",        description="Audio sample rate"),
-            Nautilus.Column(name='NautilusPython::title_col',        attribute='title',
-                label="Title",              description="Title of the work"),
-            Nautilus.Column(name='NautilusPython::tracknumber_col',  attribute='tracknumber',
-                label="#",                  description="Track number"),
-            Nautilus.Column(name='NautilusPython::width_col',        attribute='width',
-                label="Width",              description="Actual pixel width"),
-            Nautilus.Column(name='NautilusPython::year_col',         attribute='year',
-                label="Year",               description="Year"),
-        )
-
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def update_file_info(self, file):
-        path = urllib.unquote(file.get_uri()[7:])        
+    def _fetchMetadata( self, file ):
+        path = unquote(file.get_uri()[7:])        
         try: status = os.stat(path)
         except: return
-        
         metadata = fileMetadata()        
         previousMetadata = self.knownFiles.get(status.st_ino)
         
         if (previousMetadata is not None) and (previousMetadata[0] >= status.st_mtime):
-            print(path + " was known")
             metadata = previousMetadata[1]
         elif (status.st_size > 8): #and file.get_uri_scheme() == 'file': # Skip non-local files
             mime = file.get_mime_type()
             if mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
-            elif mime.startswith(('aud', 'vid')) or path.endswith(('.ofr', '.ofs')):
+            elif mime.startswith(('aud', 'vid')):
+                self._fetchAVMetadata(metadata, path, mime)
+            elif path.endswith(('.ofr', '.ofs', '.rmvb', '.rm', '.ram')):
                 self._fetchAVMetadata(metadata, path, mime)
             elif mime.startswith('app'):
-                #reader1 = threading.Thread(target=thread_function, args=(1,))
                 mime = mime[12:]
                 if mime.endswith('pdf'): self.get_pdf_info(metadata, path)
                 elif mime.startswith('epub'): self.get_epub_info(metadata, path)
                 elif mime.endswith('torrent'): self._fetchTorrentMetadata(metadata, path)
+            if metadata.nonBlankFields() >= minNonBlankFieldsToCache:
+                self._rememberMetadata(metadata, status)
         
         file.add_string_attribute('inode', str(status.st_ino))
         file.add_string_attribute('album', metadata.album)
         file.add_string_attribute('artist', metadata.artist)
         file.add_string_attribute('author', metadata.author)
+        if (metadata.bitrate != placeholder): metadata.bitrate += ' kbps'
         file.add_string_attribute('bitrate', metadata.bitrate)
         file.add_string_attribute('camera', metadata.camera)
         file.add_string_attribute('comment', metadata.comment)
         file.add_string_attribute('date', metadata.date)
-        if (metadata.width is not placeholder) and (metadata.height is not placeholder):
+        if (metadata.width != placeholder) and (metadata.height != placeholder):
             file.add_string_attribute('dimensions', (metadata.width + 'x' + metadata.height))
         else:
             file.add_string_attribute('dimensions', placeholder)
@@ -484,14 +502,88 @@ class ColumnExtension(GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoPro
         file.add_string_attribute('genre', metadata.genre)
         file.add_string_attribute('height', metadata.height)
         file.add_string_attribute('pages', metadata.pages)
+        if (metadata.samplerate != placeholder): metadata.samplerate += ' Hz'
         file.add_string_attribute('samplerate', metadata.samplerate)
         file.add_string_attribute('title', metadata.title)
         file.add_string_attribute('tracknumber', metadata.tracknumber)
         file.add_string_attribute('width', metadata.width)
         file.add_string_attribute('year', metadata.year)
         file.add_string_attribute('exif_flash', metadata.exif_flash)
-                    
-        self.get_columns()
+
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
+    def get_columns( self ):
+        self._logMessage("Adding extra columns...")
+        return (
+            Nautilus.Column(name='Metanautilus::inode_col',        attribute='inode',
+                label="Index Node",         description="Index Node of the file"),
+            Nautilus.Column(name='Metanautilus::album_col',        attribute='album',
+                label="Album",              description="The album the work is part of"),
+            Nautilus.Column(name='Metanautilus::artist_col',       attribute='artist',
+                label="Artist",             description="Artist of the work"),
+            Nautilus.Column(name='Metanautilus::author_col',       attribute='author',
+                label="Author",             description="Author of the work"),
+            Nautilus.Column(name='Metanautilus::bitrate_col',      attribute='bitrate',
+                label="Bit Rate",           description="Overall bitrate"),
+            Nautilus.Column(name='Metanautilus::camera_col',       attribute='camera',
+                label="Camera Model",       description="Camera model used to take the picture"),
+            Nautilus.Column(name='Metanautilus::comment_col',      attribute='comment',
+                label="Comment",            description="Comment"),
+            Nautilus.Column(name='Metanautilus::date_col',         attribute='date',
+                label="Date",               description="Year, Month and Day"),
+            Nautilus.Column(name='Metanautilus::dimensions_col',   attribute='dimensions',
+                label="Dimensions",         description="Actual pixel dimensions"),
+            Nautilus.Column(name='Metanautilus::duration_col',     attribute='duration',
+                label="Duration",           description="Audio or video duration"),
+            Nautilus.Column(name='Metanautilus::exif_flash_col',   attribute='exif_flash',
+                label="Flash (EXIF)",       description="Flash mode (EXIF)"),
+            Nautilus.Column(name='Metanautilus::genre_col',        attribute='genre',
+                label="Genre",              description="Genre of the work"),
+            Nautilus.Column(name='Metanautilus::height_col',       attribute='height',
+                label="Height",             description="Actual pixel height"),
+            Nautilus.Column(name='Metanautilus::pages_col',        attribute='pages',
+                label="Pages",              description="Page count of the document"),
+            Nautilus.Column(name='Metanautilus::samplerate_col',   attribute='samplerate',
+                label="Sample Rate",        description="Audio sample rate"),
+            Nautilus.Column(name='Metanautilus::title_col',        attribute='title',
+                label="Title",              description="Title of the work"),
+            Nautilus.Column(name='Metanautilus::tracknumber_col',  attribute='tracknumber',
+                label="#",                  description="Track number"),
+            Nautilus.Column(name='Metanautilus::width_col',        attribute='width',
+                label="Width",              description="Actual pixel width"),
+            Nautilus.Column(name='Metanautilus::year_col',         attribute='year',
+                label="Year",               description="Year"),
+        )
+
+    def update_file_info( self, file ):
+        self._fetchMetadata(file)
+
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
+    def __init__( self ):
+        self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
+        cacheDir = os.getenv("HOME") + '/.cache/metanautilus/'
+        cacheFile = cacheDir + 'known-metadata'
+        if not (os.path.exists(cacheDir) and os.path.isdir(cacheDir)):
+            #os.makedirs(name=cacheDir, exist_ok=True) # Python >=3.2
+            try: os.makedirs(name=cacheDir) # Python <3.2
+            except OSError as e:
+                if (e.errno == errno.EEXIST) and os.path.isdir(path): pass
+                else: raise
+        if os.path.exists(cacheFile) and os.path.isfile(cacheFile):
+            try:
+                with open(cacheFile, 'rb') as cacheHandle:
+                    self.knownFiles = load(cacheHandle)
+            except EOFError:
+                self.knownFiles = dict()
+        else:
+            with open(cacheFile, 'a'): pass
+            self.knownFiles = dict()
+        self._mutex = Lock()
+        self.unpickledKnownFiles = 0
+        pickler = Thread(target=self._keepKnownMetadataPickled, args=(cacheFile,))
+        pickler.daemon = True
+        pickler.start()
 
 # =============================================================================================
 
