@@ -53,9 +53,10 @@ from torrentool.api import Torrent
 # =============================================================================================
 
 placeholder = "-"
-minNonBlankFieldsToCache = 3
+minshouldBeRememberedToRemember = 3
 minFilesToCache = 25
 maxThreads = 4 # from multiprocessing import cpu_count # maybe?
+ignoreNonLocalFiles = False
 
 # =============================================================================================
 
@@ -79,7 +80,7 @@ class fileMetadata():
         self.year = placeholder
         self.exif_flash = placeholder
     
-    def nonBlankFields( self ):
+    def shouldBeRemembered( self ):
         nonBlankCount = 0
         if self.album != placeholder: nonBlankCount += 1
         if self.artist != placeholder: nonBlankCount += 1
@@ -98,14 +99,19 @@ class fileMetadata():
         if self.width != placeholder: nonBlankCount += 1
         if self.year != placeholder: nonBlankCount += 1
         if self.exif_flash != placeholder: nonBlankCount += 1
-        return nonBlankCount
+        return (nonBlankCount >= minshouldBeRememberedToRemember)
 
 # =============================================================================================
 
 class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvider ):
 
-    def _logMessage( self, message ):
-        sys.stdout.write("Metanautilus: ")
+    def _logMessage( self, message, isWarning = False ):
+        if (isWarning): 
+            if (self._lastWarning == message): return
+            self._lastWarning = message
+            sys.stdout.write("Metanautilus-\x1B[33;1mWARNING\x1B[0;0m: ")
+        else: 
+            sys.stdout.write("Metanautilus: ")
         now = datetime.now()
         prettyTime = ("{:%H:%M:%S.}".format(now) + str(now.microsecond * 1000))[:12]
         sys.stdout.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
@@ -262,7 +268,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             metadata.tracknumber = self._formatedTrackNumber(av.get('TRACKNUMBER', [placeholder])[0])
             metadata.year = av.get('DATE', [placeholder])[0]
         except:
-            self.info_fetching_failure("Ogg", path)
+            pass
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
@@ -480,17 +486,58 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             pass
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def _fetchMetadata( self, file ):
-        path = unquote(file.get_uri()[7:])        
-        try: status = os.stat(path)
-        except: return
-        metadata = fileMetadata()        
-        previousMetadata = self.knownFiles.get(status.st_ino)
+    
+    def _assignNothingToFile( self, file ):
+        file.add_string_attribute('album', placeholder)
+        file.add_string_attribute('artist', placeholder)
+        file.add_string_attribute('author', placeholder)
+        file.add_string_attribute('bitrate', placeholder)
+        file.add_string_attribute('camera', placeholder)
+        file.add_string_attribute('comment', placeholder)
+        file.add_string_attribute('date', placeholder)
+        file.add_string_attribute('dimensions', placeholder)
+        file.add_string_attribute('duration', placeholder)
+        file.add_string_attribute('genre', placeholder)
+        file.add_string_attribute('height', placeholder)
+        file.add_string_attribute('pages', placeholder)
+        file.add_string_attribute('samplerate', placeholder)
+        file.add_string_attribute('title', placeholder)
+        file.add_string_attribute('tracknumber', placeholder)
+        file.add_string_attribute('width', placeholder)
+        file.add_string_attribute('year', placeholder)
+        file.add_string_attribute('exif_flash', placeholder)
         
+    def _assignMetadataToFile( self, file, metadata ):
+        file.add_string_attribute('album', metadata.album)
+        file.add_string_attribute('artist', metadata.artist)
+        file.add_string_attribute('author', metadata.author)
+        file.add_string_attribute('bitrate', metadata.bitrate + 
+            (' kbps' if (metadata.bitrate != placeholder) else ''))
+        file.add_string_attribute('camera', metadata.camera)
+        file.add_string_attribute('comment', metadata.comment)
+        file.add_string_attribute('date', metadata.date)
+        if (metadata.width != placeholder) and (metadata.height != placeholder):
+            file.add_string_attribute('dimensions', (metadata.width + 'x' + metadata.height))
+        else:
+            file.add_string_attribute('dimensions', placeholder)
+        file.add_string_attribute('duration', metadata.duration)
+        file.add_string_attribute('genre', metadata.genre)
+        file.add_string_attribute('height', metadata.height)
+        file.add_string_attribute('pages', metadata.pages)
+        file.add_string_attribute('samplerate', metadata.samplerate + 
+            (' Hz' if (metadata.samplerate != placeholder) else ''))
+        file.add_string_attribute('title', metadata.title)
+        file.add_string_attribute('tracknumber', metadata.tracknumber)
+        file.add_string_attribute('width', metadata.width)
+        file.add_string_attribute('year', metadata.year)
+        file.add_string_attribute('exif_flash', metadata.exif_flash)
+
+    def _fetchMetadataThenAssignToFile( self, file, isLocal, status, path ):
+        metadata = fileMetadata()        
+        previousMetadata = self.knownFiles.get(status.st_ino) if (isLocal) else None
         if (previousMetadata is not None) and (previousMetadata[0] >= status.st_mtime):
             metadata = previousMetadata[1]
-        elif (status.st_size > 8): #and file.get_uri_scheme() == 'file': # Skip non-local files
+        elif (status.st_size > 8): #and : # Skip non-local files
             mime = file.get_mime_type()
             if mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
@@ -505,35 +552,50 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 if mime.endswith('pdf'): self.get_pdf_info(metadata, path)
                 elif mime.startswith('epub'): self.get_epub_info(metadata, path)
                 elif mime.endswith('torrent'): self._fetchTorrentMetadata(metadata, path)
-            if metadata.nonBlankFields() >= minNonBlankFieldsToCache:
+            if (isLocal and metadata.shouldBeRemembered()):
                 self._rememberMetadata(metadata, status)
+        self._assignMetadataToFile(file, metadata)
         
-        file.add_string_attribute('inode', str(status.st_ino))
-        file.add_string_attribute('album', metadata.album)
-        file.add_string_attribute('artist', metadata.artist)
-        file.add_string_attribute('author', metadata.author)
-        if (metadata.bitrate != placeholder): metadata.bitrate += ' kbps'
-        file.add_string_attribute('bitrate', metadata.bitrate)
-        file.add_string_attribute('camera', metadata.camera)
-        file.add_string_attribute('comment', metadata.comment)
-        file.add_string_attribute('date', metadata.date)
-        if (metadata.width != placeholder) and (metadata.height != placeholder):
-            file.add_string_attribute('dimensions', (metadata.width + 'x' + metadata.height))
-        else:
-            file.add_string_attribute('dimensions', placeholder)
-        file.add_string_attribute('duration', metadata.duration)
-        file.add_string_attribute('genre', metadata.genre)
-        file.add_string_attribute('height', metadata.height)
-        file.add_string_attribute('pages', metadata.pages)
-        if (metadata.samplerate != placeholder): metadata.samplerate += ' Hz'
-        file.add_string_attribute('samplerate', metadata.samplerate)
-        file.add_string_attribute('title', metadata.title)
-        file.add_string_attribute('tracknumber', metadata.tracknumber)
-        file.add_string_attribute('width', metadata.width)
-        file.add_string_attribute('year', metadata.year)
-        file.add_string_attribute('exif_flash', metadata.exif_flash)
-
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    
+    def _shallIgnore( self, file, status, path ):
+        if (ignoreNonLocalFiles and (file.get_uri_scheme() != 'file')): return True
+        if (status.st_size < 16): return True
+        return False
+        
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
+    def _usablePath( self, file ):
+        scheme = file.get_uri_scheme()
+        if (self._gvfsMountpointsDirExists):
+            uri = file.get_uri().split('/')
+            if (scheme == 'mtp'):
+                uri = uri[0] + 'host=' + uri[2].replace(',', '%2C') + '/' + unquote('/'.join(uri[3:]))
+                return (self._gvfsMountpointsDir + uri)
+            elif (scheme == 'smb'):
+                uri = uri[2] + ',share=' + unquote(uri[3]) + '/' + unquote('/'.join(uri[4:]))
+                uri = 'smb-share:server=' + uri
+                return (self._gvfsMountpointsDir + uri)
+        self._logMessage("Unable to handle " + scheme + ":// URIs", isWarning=True)
+        return ''
+
+    def update_file_info( self, file ):
+        if (file.get_uri_scheme() == 'file'): 
+            path = os.path.realpath(unquote(file.get_uri()[7:]))
+            isLocal = True
+        else: 
+            path = self._usablePath(file)
+            isLocal = False
+        try: 
+            status = os.stat(path)
+            file.add_string_attribute('inode', str(status.st_ino))
+            fileType = file.get_file_type()
+        except Exception as e:
+            file.add_string_attribute('inode', placeholder)
+            fileType = 0
+        if (fileType == 1): self._fetchMetadataThenAssignToFile(file, isLocal, status, path)
+        elif (fileType == 2): self._assignNothingToFile(file) # TODO: prefetch dir's content
+        else: self._assignNothingToFile(file)
 
     def get_columns( self ):
         self._logMessage("Adding extra columns...")
@@ -577,20 +639,16 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             Nautilus.Column(name='Metanautilus::year_col',         attribute='year',
                 label="Year",               description="Year"),
         )
-
-    def update_file_info( self, file ):
-        fileType = file.get_file_type()
-        if (fileType == FileType.REGULAR) or (fileType == FileType.SYMBOLIC_LINK):
-            self._fetchMetadata(file)
-        elif (fileType == FileType.DIRECTORY): 
-            pass # TODO: prefetch
-
+        
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
     def __init__( self ):
+        self._lastWarning = ""
         self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
         cacheDir = os.getenv("HOME") + '/.cache/metanautilus/'
         cacheFile = cacheDir + 'known-metadata'
+        self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
+        self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
         if not (os.path.exists(cacheDir) and os.path.isdir(cacheDir)):
             #os.makedirs(name=cacheDir, exist_ok=True) # Python >=3.2
             try: os.makedirs(name=cacheDir) # Python <3.2
