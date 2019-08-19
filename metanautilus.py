@@ -196,12 +196,25 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if torrent.comment is not None: metadata.comment = torrent.comment
         if torrent.name is not None: metadata.title = torrent.name
     
-    def _fetchXMLMetadata( self, metadata, path, mime ):
+    def _fetchHTMLMetadata( self, metadata, path ):
         try: xml = lxml.html.parse(path)
         except: return
-        title = xml.find(".//title")
-        if title is None: title = xml.find(".//name")
+        title = xml.find('.//title')
+        if title is None: 
+            title = xml.find('.//meta[@name="title"]')
+            if title is None: title = xml.find('.//meta[@property="og:title"]')
+            if title is None: title = xml.find('.//meta[@name="parsely-title"]')
+            if title is None: title = xml.find('.//name')
         if title is not None: metadata.title = title.text
+        author = xml.find('.//meta[@name="author"]')
+        if author is None: author = xml.find('.//meta[@property="og:author"]')
+        if author is None: author = xml.find('.//meta[@name="parsely-author"]')
+        if author is not None: metadata.author = author.get('content')
+        comment = xml.find('.//meta[@name="description"]')
+        if comment is None: comment = xml.find('.//meta[@property="og:description"]')
+        if comment is None: comment = xml.find('.//meta[@name="comment"]')
+        if comment is None: comment = xml.find('.//meta[@name="parselycomment"]')
+        if comment is not None: metadata.comment = comment.get('content') 
         
     def get_pdf_info( self, metadata, path ):
         with open(path, 'rb') as documentfile:
@@ -302,6 +315,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.artist = av.get('\xA9ART', [placeholder])[0]
         metadata.author = self._formatedList(av.get('\xA9wrt', [placeholder]))
         metadata.bitrate = str(av.info.bitrate / 1000)
+        metadata.comment = av.get('\xA9cmt', [placeholder])[0]
         metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
         metadata.duration = self._formatedDuration(av.info.length)
         metadata.genre = av.get('\xA9gen', [placeholder])[0]
@@ -323,6 +337,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if author is None: author = audio.get('WRITER')
         if author is not None: metadata.author = self._formatedList(author)
         metadata.bitrate = str(audio.info.bitrate / 1000)
+        metadata.comment = audio.get('COMMENT', [placeholder])[0]
         metadata.duration = self._formatedDuration(audio.info.length)
         metadata.genre = audio.get('GENRE', [placeholder])[0]
         metadata.samplerate = str(audio.info.sample_rate)
@@ -383,11 +398,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             elif track.track_type[0] != 'G': break
         if basicInformationOnly: return
         if av.tracks[0].album is not None: metadata.album = av.tracks[0].album
-        if av.tracks[0].director is not None: metadata.author = av.tracks[0].director
         if av.tracks[0].performer is not None: metadata.artist = av.tracks[0].performer
+        if av.tracks[0].director is not None: metadata.author = av.tracks[0].director
+        elif av.tracks[0].composer is not None: metadata.author = av.tracks[0].composer
+        elif av.tracks[0].lyricist is not None: metadata.author = av.tracks[0].lyricist
+        elif av.tracks[0].writer is not None: metadata.author = av.tracks[0].writer
         if av.tracks[0].comment is not None: metadata.comment = av.tracks[0].comment
+        if av.tracks[0].released_date is not None: metadata.date = av.tracks[0].released_date
+        elif av.tracks[0].recorded_date is not None: metadata.date = av.tracks[0].recorded_date
+        if metadata.date != placeholder: metadata.year = metadata.date[:4]
         if av.tracks[0].genre is not None: metadata.genre = av.tracks[0].genre
-        if av.tracks[0].movie_name is not None: metadata.title = av.tracks[0].title
+        if av.tracks[0].movie_name is not None: metadata.title = av.tracks[0].movie_name
         elif av.tracks[0].track_name is not None: metadata.title = av.tracks[0].track_name
         elif av.tracks[0].title is not None: metadata.title = av.tracks[0].title
         if av.tracks[0].track_name_position is not None: metadata.tracknumber = av.tracks[0].track_name_position
@@ -477,6 +498,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 self._fetchAVMetadata(metadata, path, mime)
             elif path.endswith(('.ofr', '.ofs', '.rmvb', '.rm', '.ram')):
                 self._fetchAVMetadata(metadata, path, mime)
+            elif path.endswith(('.html', '.xhtml', '.htm')):
+                self._fetchHTMLMetadata(metadata, path)
             elif mime.startswith('app'):
                 mime = mime[12:]
                 if mime.endswith('pdf'): self.get_pdf_info(metadata, path)
