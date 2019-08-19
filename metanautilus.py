@@ -579,7 +579,11 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         )
 
     def update_file_info( self, file ):
-        self._fetchMetadata(file)
+        fileType = file.get_file_type()
+        if (fileType == FileType.REGULAR) or (fileType == FileType.SYMBOLIC_LINK):
+            self._fetchMetadata(file)
+        elif (fileType == FileType.DIRECTORY): 
+            pass # TODO: prefetch
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
