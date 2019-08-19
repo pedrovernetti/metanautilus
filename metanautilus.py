@@ -53,10 +53,9 @@ from torrentool.api import Torrent
 # =============================================================================================
 
 placeholder = "-"
-minNonBlankFieldsToRemember = 3
-minFilesToCache = 25
-maxThreads = 4 # from multiprocessing import cpu_count # maybe?
+minFilesToCache = 20
 ignoreNonLocalFiles = False
+maximumNonLocalFileSize = 268435456 # 256MB
 
 # =============================================================================================
 
@@ -80,7 +79,7 @@ class fileMetadata():
         self.year = placeholder
         self.exif_flash = placeholder
     
-    def shouldBeRemembered( self ):
+    def nonBlankFields( self ):
         nonBlankCount = 0
         if self.album != placeholder: nonBlankCount += 1
         if self.artist != placeholder: nonBlankCount += 1
@@ -99,7 +98,7 @@ class fileMetadata():
         if self.width != placeholder: nonBlankCount += 1
         if self.year != placeholder: nonBlankCount += 1
         if self.exif_flash != placeholder: nonBlankCount += 1
-        return (nonBlankCount >= minNonBlankFieldsToRemember)
+        return nonBlankCount
 
 # =============================================================================================
 
@@ -128,35 +127,63 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     
     def _pickleKnownMetadata( self, cacheFile ):
         self._logMessage("Pickling currently known metadata...")
-        self._mutex.acquire()
+        self._knownMetadataMutex.acquire()
         if not os.path.exists(cacheFile) or os.path.isfile(cacheFile):
             with open(cacheFile, 'wb') as cacheHandle:
-                dump(self.knownFiles, cacheHandle, protocol=HIGHEST_PROTOCOL)
-        self.unpickledKnownFiles = 0
-        self._mutex.release()
+                try: dump(self._knownFiles, cacheHandle, protocol=HIGHEST_PROTOCOL)
+                except PickleError: self._logMessage("Failed to pickle known metadata...")
+        self._unpickledKnownFiles = 0
+        self._knownMetadataMutex.release()
+    
+    def _pickleKnownJunk( self, junkCacheFile ):
+        self._logMessage("Pickling list of currently known junk...")
+        self._knownJunkMutex.acquire()
+        if not os.path.exists(junkCacheFile) or os.path.isfile(junkCacheFile):
+            with open(junkCacheFile, 'wb') as cacheHandle:
+                try: dump(self._knownJunk, cacheHandle, protocol=HIGHEST_PROTOCOL)
+                except PickleError: self._logMessage("Failed to pickle known junk list...")
+        self._unpickledKnownFiles = 0
+        self._knownJunkMutex.release()
 
-    def _keepKnownMetadataPickled( self, cacheFile ):
+    def _keepKnownMetadataPickled( self, cacheFile, junkCacheFile ):
         cycle = 0
         sleep(3)
         while True:
-            if (self.unpickledKnownFiles > 0):
-                if not os.path.exists(cacheFile): # clear cache if cache file is deleted
-                    self._logMessage("Forgetting everything (metadata pickle file removed)...")
-                    self._mutex.acquire()
-                    self.knownFiles = dict()
-                    self.unpickledKnownFiles = 0
-                    self._mutex.release()
+            if (self._unpickledKnownFiles > 0):
+                if (not os.path.exists(cacheFile)):
+                    self._logMessage("Forgetting all metadata (pickle file removed)...")
+                    self._knownMetadataMutex.acquire()
+                    self._knownFiles = dict()
+                    self._unpickledKnownFiles = 0
+                    self._knownMetadataMutex.release()
                     with open(cacheFile, 'a'): pass
-                elif (self.unpickledKnownFiles > minFilesToCache) or ((cycle % 10) == 0): 
+                elif (self._unpickledKnownFiles > minFilesToCache) or ((cycle % 10) == 0): 
                     self._pickleKnownMetadata(cacheFile)
-            cycle += 1
+            if (self._unpickledKnownJunk > 0):
+                if (not os.path.exists(junkCacheFile)):
+                    self._logMessage("Forgetting all known junk (pickle file removed)...")
+                    self._knownJunkMutex.acquire()
+                    self._knownJunk = dict()
+                    self._unpickledKnownJunk = 0
+                    self._knownJunkMutex.release()
+                    with open(junkCacheFile, 'a'): pass
+                elif (self._unpickledKnownJunk > minFilesToCache) or ((cycle % 10) == 0): 
+                    self._pickleKnownJunk(junkCacheFile)
+            if (cycle == 1000): cycle = 1
+            else: cycle += 1
             sleep(15)
             
     def _rememberMetadata( self, metadata, fileStatus ):
-        self._mutex.acquire()
-        self.knownFiles[fileStatus.st_ino] = (fileStatus.st_mtime, metadata)
-        self.unpickledKnownFiles += 1
-        self._mutex.release()
+        self._knownMetadataMutex.acquire()
+        self._knownFiles[fileStatus.st_ino] = (fileStatus.st_mtime, metadata)
+        self._unpickledKnownJunk += 1
+        self._knownMetadataMutex.release()
+            
+    def _rememberJunk( self, fileStatus ):
+        self._knownJunkMutex.acquire()
+        self._knownJunk[fileStatus.st_ino] = fileStatus.st_mtime
+        self._unpickledKnownFiles += 1
+        self._knownJunkMutex.release()
         
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
@@ -541,11 +568,19 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         file.add_string_attribute('exif_flash', metadata.exif_flash)
 
     def _fetchMetadataThenAssignToFile( self, file, isLocal, status, path ):
-        metadata = fileMetadata()        
-        previousMetadata = self.knownFiles.get(status.st_ino) if (isLocal) else None
-        if (previousMetadata is not None) and (previousMetadata[0] >= status.st_mtime):
-            metadata = previousMetadata[1]
-        elif (status.st_size > 8): #and : # Skip non-local files
+        if (isLocal):
+            isKnownJunk = self._knownJunk.get(status.st_ino) >= status.st_mtime
+            previousMetadata = self._knownFiles.get(status.st_ino)
+        else:
+            isKnownJunk = status.st_size > maximumNonLocalFileSize
+            previousMetadata = None 
+            
+        if (isKnownJunk or (status.st_size <= 16)):
+            self._assignNothingToFile(file)
+        elif ((previousMetadata is not None) and (previousMetadata[0] >= status.st_mtime)):
+            self._assignMetadataToFile(file, previousMetadata[1])
+        else:
+            metadata = fileMetadata() 
             mime = file.get_mime_type()
             self._mute() # Muting to hide possible third-party complaints
             if mime.startswith('ima'):
@@ -562,16 +597,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 elif mime.startswith('epub'): self.get_epub_info(metadata, path)
                 elif mime.endswith('torrent'): self._fetchTorrentMetadata(metadata, path)
             self._unmute()
-            if (isLocal and metadata.shouldBeRemembered()):
-                self._rememberMetadata(metadata, status)
-        self._assignMetadataToFile(file, metadata)
-        
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    
-    def _shallIgnore( self, file, status, path ):
-        if (ignoreNonLocalFiles and (file.get_uri_scheme() != 'file')): return True
-        if (status.st_size < 16): return True
-        return False
+            self._assignMetadataToFile(file, metadata)
+            if (isLocal):
+                if (metadata.nonBlankFields() == 0): self._rememberJunk(status)
+                else: self._rememberMetadata(metadata, status)
         
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
@@ -600,7 +629,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             status = os.stat(path)
             file.add_string_attribute('inode', str(status.st_ino))
             fileType = file.get_file_type()
-        except Exception as e:
+        except:
             file.add_string_attribute('inode', placeholder)
             fileType = 0
         if (fileType == 1): self._fetchMetadataThenAssignToFile(file, isLocal, status, path)
@@ -651,34 +680,53 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         )
         
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def __init__( self ):
-        self._lastWarning = ""
-        self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
-        cacheDir = os.getenv("HOME") + '/.cache/metanautilus/'
-        cacheFile = cacheDir + 'known-metadata'
-        self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
-        self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
+    
+    def _loadOrCreateCache( self, cacheDir, cacheFile, junkCacheFile ):
         if not (os.path.exists(cacheDir) and os.path.isdir(cacheDir)):
-            #os.makedirs(name=cacheDir, exist_ok=True) # Python >=3.2
-            try: os.makedirs(name=cacheDir) # Python <3.2
+            try: os.makedirs(name=cacheDir)
             except OSError as e:
-                if (e.errno == errno.EEXIST) and os.path.isdir(path): pass
-                else: raise
+                if (e.errno == errno.EEXIST) and os.path.isdir(path): 
+                    pass
+                else: 
+                    self._logMessage("Failed to create cache folder", isWarning=True)
+                    return
         if os.path.exists(cacheFile) and os.path.isfile(cacheFile):
-            try:
-                with open(cacheFile, 'rb') as cacheHandle:
-                    self.knownFiles = load(cacheHandle)
+            try:  
+                with open(cacheFile, 'rb') as cacheHandle: self._knownFiles = load(cacheHandle)
             except EOFError:
-                self.knownFiles = dict()
+                self._knownFiles = dict()
         else:
             with open(cacheFile, 'a'): pass
-            self.knownFiles = dict()
-        self._mutex = Lock()
-        self.unpickledKnownFiles = 0
-        pickler = Thread(target=self._keepKnownMetadataPickled, args=(cacheFile,))
+            self._knownFiles = dict()
+        if os.path.exists(junkCacheFile) and os.path.isfile(junkCacheFile):
+            try:
+                with open(junkCacheFile, 'rb') as cacheHandle: self._knownJunk = load(cacheHandle)
+            except EOFError:
+                self._knownJunk = dict()
+        else:
+            with open(junkCacheFile, 'a'): pass
+            self._knownJunk = dict()
+            
+    def _initializeCache( self ):
+        cacheDir = os.getenv("HOME") + '/.cache/metanautilus/'
+        cacheFile = cacheDir + 'known-metadata'
+        junkCacheFile = cacheDir + 'known-junk'        
+        self._loadOrCreateCache(cacheDir, cacheFile, junkCacheFile)
+        self._knownMetadataMutex = Lock()
+        self._knownJunkMutex = Lock()
+        self._unpickledKnownFiles = 0
+        self._unpickledKnownJunk = 0
+        pickler = Thread(target=self._keepKnownMetadataPickled, args=(cacheFile,junkCacheFile))
         pickler.daemon = True
         pickler.start()
+
+    def __init__( self ):
+        self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
+        self._lastWarning = ""
+        self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
+        self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
+        self._initializeCache()
+        self.tictoc = 0
 
 # =============================================================================================
 
