@@ -105,6 +105,14 @@ class fileMetadata():
 
 class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvider ):
 
+    def _unmute( self ):
+        sys.stderr = sys.__stderr__
+        sys.stdout = sys.__stdout__
+        
+    def _mute( self ):
+        try: sys.stderr = sys.stdout = open(os.devnull, 'w')
+        except: self._unmute()
+
     def _logMessage( self, message, isWarning = False ):
         if (isWarning): 
             if (self._lastWarning == message): return
@@ -539,6 +547,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             metadata = previousMetadata[1]
         elif (status.st_size > 8): #and : # Skip non-local files
             mime = file.get_mime_type()
+            self._mute() # Muting to hide possible third-party complaints
             if mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
             elif mime.startswith(('aud', 'vid')):
@@ -552,6 +561,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 if mime.endswith('pdf'): self.get_pdf_info(metadata, path)
                 elif mime.startswith('epub'): self.get_epub_info(metadata, path)
                 elif mime.endswith('torrent'): self._fetchTorrentMetadata(metadata, path)
+            self._unmute()
             if (isLocal and metadata.shouldBeRemembered()):
                 self._rememberMetadata(metadata, status)
         self._assignMetadataToFile(file, metadata)
