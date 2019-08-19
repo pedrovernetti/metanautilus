@@ -53,7 +53,7 @@ from torrentool.api import Torrent
 # =============================================================================================
 
 placeholder = "-"
-minshouldBeRememberedToRemember = 3
+minNonBlankFieldsToRemember = 3
 minFilesToCache = 25
 maxThreads = 4 # from multiprocessing import cpu_count # maybe?
 ignoreNonLocalFiles = False
@@ -99,7 +99,7 @@ class fileMetadata():
         if self.width != placeholder: nonBlankCount += 1
         if self.year != placeholder: nonBlankCount += 1
         if self.exif_flash != placeholder: nonBlankCount += 1
-        return (nonBlankCount >= minshouldBeRememberedToRemember)
+        return (nonBlankCount >= minNonBlankFieldsToRemember)
 
 # =============================================================================================
 
