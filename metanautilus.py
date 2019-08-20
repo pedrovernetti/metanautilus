@@ -39,10 +39,10 @@ from PIL import Image                # for reading image
 import pyexiv2                       # for reading EXIF metadata
 
 from pymediainfo import MediaInfo
-import mutagen.asf, mutagen.flac, mutagen.mp4
+import mutagen.flac, mutagen.mp4
+import mutagen.smf
 import mutagen.id3, mutagen.mp3, mutagen.aac, mutagen.aiff, mutagen.dsf, mutagen.trueaudio
 import mutagen.apev2, mutagen.monkeysaudio, mutagen.musepack, mutagen.optimfrog, mutagen.wavpack
-# midi
 
 from PyPDF2 import PdfFileReader     # for reading PDF
 from ebooklib import epub            # for reading EPUB
@@ -144,10 +144,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._unpickledKnownFiles = 0
         self._knownJunkMutex.release()
 
-    def _keepKnownMetadataPickled( self, cacheFile, junkCacheFile ):
+    def _keepKnownInformationPickled( self, cacheFile, junkCacheFile ):
         cycle = 0
-        sleep(3)
         while True:
+            sleep(3)
             if (self._unpickledKnownFiles > 0):
                 if (not os.path.exists(cacheFile)):
                     self._logMessage("Forgetting all metadata (pickle file removed)...")
@@ -170,7 +170,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                     self._pickleKnownJunk(junkCacheFile)
             if (cycle == 1000): cycle = 1
             else: cycle += 1
-            sleep(15)
+            sleep(12)
             
     def _rememberMetadata( self, metadata, fileStatus ):
         self._knownMetadataMutex.acquire()
@@ -256,9 +256,18 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if comment is None: comment = xml.find('.//meta[@name="parselycomment"]')
         if comment is not None: metadata.comment = comment.get('content') 
         
-    def get_pdf_info( self, metadata, path ):
-        with open(path, 'rb') as documentfile:
-            try: document = PdfFileReader(documentfile)
+    def _fetchDesktopEntryMetadata( self, metadata, path ):
+        with open(path, 'r') as textfile:
+            for line in myfile:
+                key, value = line.split('=', 1)
+                if (key == 'Name'): metadata.title = value
+                elif (key == 'Comment'): metadata.comment = value
+                elif (key == 'Categories'): metadata.genre = value.replace(';', '; ')
+            if (metadata.genre[-1:] == ' '): metadata.genre = metadata.genre[:-1]
+        
+    def _fetchPDFMetadata( self, metadata, path ):
+        with open(path, 'rb') as documentFile:
+            try: document = PdfFileReader(documentFile)
             except: return
             if document.isEncrypted: return
             try: metadata.pages = str(document.getNumPages())
@@ -268,7 +277,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             metadata.author = info.get('/Author', placeholder)
             metadata.title = info.get('/Title', placeholder)
 
-    def get_epub_info( self, metadata, path ):
+    def _fetchEPUBMetadata( self, metadata, path ):
         try: document = epub.read_epub(path)
         except Exception as e: sys.stderr.write(str(e))
 
@@ -371,7 +380,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         except: return
         general = av.tracks[0]
         if general.overall_bit_rate is not None: metadata.bitrate = str(int(general.overall_bit_rate / 1000))
-        if general.duration is not None: metadata.duration = self._formatedDuration(general.duration)
+        if general.duration is not None: metadata.duration = self._formatedDuration(general.duration / 1000)
         elif general.other_duration is not None: metadata.duration = general.other_duration[3][:8]
         for track in av.tracks:
             if track.track_type[0] == 'V':
@@ -537,10 +546,12 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 self._fetchAVMetadata(metadata, path, mime)
             elif path.endswith(('.html', '.xhtml', '.htm')):
                 self._fetchHTMLMetadata(metadata, path)
+            elif path.endswith('.desktop'):
+                self._fetchDesktopEntryMetadata(metadata, path)
             elif mime.startswith('app'):
                 mime = mime[12:]
-                if mime.endswith('pdf'): self.get_pdf_info(metadata, path)
-                elif mime.startswith('epub'): self.get_epub_info(metadata, path)
+                if mime.endswith('pdf'): self._fetchPDFMetadata(metadata, path)
+                elif mime.startswith('epub'): self._fetchEPUBMetadata(metadata, path)
                 elif mime.endswith('torrent'): self._fetchTorrentMetadata(metadata, path)
             self._unmute()
             self._assignMetadataToFile(file, metadata)
@@ -561,6 +572,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 uri = uri[2] + ',share=' + unquote(uri[3]) + '/' + unquote('/'.join(uri[4:]))
                 uri = 'smb-share:server=' + uri
                 return (self._gvfsMountpointsDir + uri)
+            #elif (scheme == 'archive'): # Doesn't work as the other cases
+            #    uri = 'archive:host=' + uri[2] + '/' + unquote('/'.join(uri[3:]))
+            #    return (self._gvfsMountpointsDir + uri)
         self._logMessage("Unable to handle " + scheme + ":// URIs", isWarning=True)
         return ''
 
@@ -662,7 +676,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._knownJunkMutex = Lock()
         self._unpickledKnownFiles = 0
         self._unpickledKnownJunk = 0
-        pickler = Thread(target=self._keepKnownMetadataPickled, args=(cacheFile,junkCacheFile))
+        pickler = Thread(target=self._keepKnownInformationPickled, args=(cacheFile,junkCacheFile))
         pickler.daemon = True
         pickler.start()
 
