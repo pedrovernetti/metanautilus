@@ -12,39 +12,42 @@
 #     and place a copy of this python script there with execute permission
 
 # =============================================================================================
- 
+
+# Basic stuff
 import sys, os
+pythonIs2OrOlder = (sys.version[0] <= '2')
 from threading import Thread, activeCount, Lock
 from datetime import datetime
 from time import sleep
 from urllib import unquote
 from pickle import dump, load, HIGHEST_PROTOCOL
-if (sys.version[0] <= '2'): 
-    pythonIs2OrOlder = True
-    import Queue as queue
-else: 
-    pythonIs2OrOlder = False
-    import queue as queue
+if (pythonIs2OrOlder): import Queue as queue
+else: import queue as queue
 
-from gi import require_version       # Nautilus stuff
-require_version("Gtk", "3.0")        # 
-require_version('Nautilus', '3.0')   # ...
+# Nautilus/GI/... stuff
+from gi import require_version
+require_version("Gtk", "3.0")
+require_version('Nautilus', '3.0')
 from gi.repository import GLib, Nautilus, GObject, Gtk
 GLib.threads_init()
 GObject.threads_init()
 
-import lxml.html                     # for reading XML/HTML
+# Tool to handle XML-based formats
+import lxml.html
 
+# Tool to handle ZIP-compressed formats
 import zipfile
 
-from PIL import Image                # for reading image
-import pyexiv2                       # for reading EXIF metadata
+# Tools to fetch metadata from images
+from PIL import Image
+import pyexiv2
 
+# Tools to fetch metadata from audio/video
 from pymediainfo import MediaInfo
 import mutagen.flac, mutagen.mp4
 import mutagen.smf
 import mutagen.id3, mutagen.mp3, mutagen.aac, mutagen.aiff, mutagen.dsf, mutagen.trueaudio
-import mutagen.apev2, mutagen.monkeysaudio, mutagen.musepack, mutagen.optimfrog, mutagen.wavpack
+import mutagen.apev2, mutagen.optimfrog
 
 from PyPDF2 import PdfFileReader     # for reading PDF
 from ebooklib import epub            # for reading EPUB
@@ -79,7 +82,7 @@ class fileMetadata():
         self.width = placeholder
         self.year = placeholder
         self.exif_flash = placeholder
-    
+
     def nonBlankFields( self ):
         nonBlankCount = 0
         if self.album != placeholder: nonBlankCount += 1
@@ -108,24 +111,24 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _unmute( self ):
         sys.stderr = sys.__stderr__
         sys.stdout = sys.__stdout__
-        
+
     def _mute( self ):
         try: sys.stderr = sys.stdout = open(os.devnull, 'w')
         except: self._unmute()
 
     def _logMessage( self, message, isWarning = False ):
-        if (isWarning): 
+        if (isWarning):
             if (self._lastWarning == message): return
             self._lastWarning = message
             sys.stdout.write("Metanautilus-\x1B[33;1mWARNING\x1B[0;0m: ")
-        else: 
+        else:
             sys.stdout.write("Metanautilus: ")
         now = datetime.now()
         prettyTime = ("{:%H:%M:%S.}".format(now) + str(now.microsecond * 1000))[:12]
         sys.stdout.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    
+
     def _pickleKnownMetadata( self, cacheFile ):
         self._logMessage("Pickling currently known metadata...")
         self._knownMetadataMutex.acquire()
@@ -135,7 +138,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 except PickleError: self._logMessage("Failed to pickle known metadata...")
         self._unpickledKnownFiles = 0
         self._knownMetadataMutex.release()
-    
+
     def _pickleKnownJunk( self, junkCacheFile ):
         self._logMessage("Pickling list of currently known junk...")
         self._knownJunkMutex.acquire()
@@ -158,7 +161,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                     self._unpickledKnownFiles = 0
                     self._knownMetadataMutex.release()
                     with open(cacheFile, 'a'): pass
-                elif (self._unpickledKnownFiles > minFilesToCache) or ((cycle % 10) == 0): 
+                elif (self._unpickledKnownFiles > minFilesToCache) or ((cycle % 10) == 0):
                     self._pickleKnownMetadata(cacheFile)
             if (self._unpickledKnownJunk > 0):
                 if (not os.path.exists(junkCacheFile)):
@@ -168,24 +171,24 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                     self._unpickledKnownJunk = 0
                     self._knownJunkMutex.release()
                     with open(junkCacheFile, 'a'): pass
-                elif (self._unpickledKnownJunk > minFilesToCache) or ((cycle % 10) == 0): 
+                elif (self._unpickledKnownJunk > minFilesToCache) or ((cycle % 10) == 0):
                     self._pickleKnownJunk(junkCacheFile)
             if (cycle == 1000): cycle = 1
             else: cycle += 1
             sleep(12)
-            
+
     def _rememberMetadata( self, metadata, fileStatus ):
         self._knownMetadataMutex.acquire()
         self._knownFiles[fileStatus.st_ino] = (fileStatus.st_mtime, metadata)
         self._unpickledKnownJunk += 1
         self._knownMetadataMutex.release()
-            
+
     def _rememberJunk( self, fileStatus ):
         self._knownJunkMutex.acquire()
         self._knownJunk[fileStatus.st_ino] = fileStatus.st_mtime
         self._unpickledKnownFiles += 1
         self._knownJunkMutex.release()
-        
+
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
     def _formatedDate( self, dateString ):
@@ -197,7 +200,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
 
     def _formatedDuration( self, secs ):
         return '%02i:%02i:%02i' % ((int(secs/3600)), (int(secs/60%60)), (int(secs%60)))
-        
+
     def _formatedList( self, stringList ):
         try:
             if len(stringList) == 1: return str(stringList[0]).replace('\x00', '').replace('\n', '')
@@ -207,16 +210,16 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             return finalString.replace('\x00', r'').replace('\n', r'')[:-1]
         except TypeError:
             return str(stringList)
-        
+
     def _formatedNumber( self, numberString ):
         finalString = ''
         for c in numberString:
             if (c > '9') or (c < '0'): finalString += c
         return finalString
-        
+
     def _formatedString( self, anyString ):
         return str(anyString).replace('\x00', r'').replace('\n', r'')
-        
+
     def _formatedTrackNumber( self, trackNumberString ):
         pos = 0
         for c in trackNumberString:
@@ -225,24 +228,24 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if pos == 0: return placeholder
         elif pos == 1: return '0' + trackNumberString[0]
         return trackNumberString[:pos]
-        
+
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    
+
     def _fetchTorrentMetadata( self, metadata, path ):
         try: torrent = Torrent.from_file(path)
         except: return
         if torrent.created_by is not None: metadata.author = torrent.created_by
-        if torrent.creation_date is not None: 
+        if torrent.creation_date is not None:
             metadata.date = torrent.creation_date.isoformat()[:10]
             metadata.year = metadata.date[:4]
         if torrent.comment is not None: metadata.comment = torrent.comment
         if torrent.name is not None: metadata.title = torrent.name
-    
+
     def _fetchHTMLMetadata( self, metadata, path ):
         try: xml = lxml.html.parse(path)
         except: return
         title = xml.find('.//title')
-        if title is None: 
+        if title is None:
             title = xml.find('.//meta[@name="title"]')
             if title is None: title = xml.find('.//meta[@property="og:title"]')
             if title is None: title = xml.find('.//meta[@name="parsely-title"]')
@@ -256,8 +259,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if comment is None: comment = xml.find('.//meta[@property="og:description"]')
         if comment is None: comment = xml.find('.//meta[@name="comment"]')
         if comment is None: comment = xml.find('.//meta[@name="parselycomment"]')
-        if comment is not None: metadata.comment = comment.get('content') 
-        
+        if comment is not None: metadata.comment = comment.get('content')
+
     def _fetchDesktopEntryMetadata( self, metadata, path ):
         with open(path, 'r') as textfile:
             for line in myfile:
@@ -266,7 +269,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 elif (key == 'Comment'): metadata.comment = value
                 elif (key == 'Categories'): metadata.genre = value.replace(';', '; ')
             if (metadata.genre[-2:] == '; '): metadata.genre = metadata.genre[:-2]
-        
+
     def _fetchPDFMetadata( self, metadata, path ):
         with open(path, 'rb') as documentFile:
             try: document = PdfFileReader(documentFile)
@@ -285,7 +288,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _readID3( self, metadata, file ):
+    def _fetchID3Metadata( self, metadata, file ):
         try: audio = mutagen.id3.ID3(file)
         except: return
         metadata.album = audio.get('TALB', [placeholder])[0]
@@ -306,67 +309,13 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.date = self._formatedDate(date)
         metadata.year = date[:4]
 
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def _fetchMP4Metadata( self, metadata, file ):
-        try: av = mutagen.mp4.MP4(file)
-        except: return    
-        metadata.album = av.get('\xA9alb', [placeholder])[0]
-        metadata.artist = self._formatedList(av.get('\xA9ART', [placeholder]))
-        metadata.author = self._formatedList(av.get('\xA9wrt', [placeholder]))
-        metadata.bitrate = str(av.info.bitrate / 1000)
-        metadata.comment = self._formatedList(av.get('\xA9cmt', [placeholder]))
-        metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
-        metadata.duration = self._formatedDuration(av.info.length)
-        metadata.genre = self._formatedList(av.get('\xA9gen', [placeholder]))
-        metadata.samplerate = str(av.info.sample_rate)
-        metadata.title = av.get('\xA9nam', [placeholder])[0]
-        metadata.tracknumber = self._formatedTrackNumber(str(av.get('trkn', [[None]])[0][0]))
-        metadata.year = av.get('\xA9day', [placeholder])[0][:4]
-
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def _fetchFLACMetadata( self, metadata, fileObject ):
-        try: audio = mutagen.flac.FLAC(fileObject)
+    def _fetchAPEv2Metadata( self, metadata, file ):
+        try: audio = mutagen.apev2.APEv2(file)
         except: return
-        metadata.album = audio.get('ALBUM', [placeholder])[0]
-        metadata.artist = self._formatedList(audio.get('ARTIST', [placeholder]))
-        author = audio.get('COMPOSER')
-        if author is None: 
-            author = audio.get('LYRICIST')
-            if author is None: author = audio.get('WRITER')
-        if author is not None: metadata.author = self._formatedList(author)
-        metadata.bitrate = str(audio.info.bitrate / 1000)
-        metadata.comment = self._formatedList(audio.get('COMMENT', [placeholder]))
-        metadata.duration = self._formatedDuration(audio.info.length)
-        metadata.genre = self._formatedList(audio.get('GENRE', [placeholder]))
-        metadata.samplerate = str(audio.info.sample_rate)
-        metadata.title = audio.get('TITLE', [placeholder])[0]
-        metadata.tracknumber = self._formatedTrackNumber(audio.get('TRACKNUMBER', [placeholder])[0])
-        date = audio.get('DATE', [placeholder])[0][:10]
-        metadata.date = self._formatedDate(date)
-        metadata.year = date[:4]
-
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def _readAPEv2( self, metadata, file, signature ):
-        audio = None
-        try: 
-            if signature.startswith(b'MAC'): audio = mutagen.monkeysaudio.MonkeysAudio(file)
-            elif signature.startswith(b'MPCK'): audio = mutagen.musepack.Musepack(file)
-            elif signature.startswith(b'OFR'): audio = mutagen.optimfrog.OptimFROG(file)
-            elif signature.startswith(b'wvpk'): audio = mutagen.wavpack
-            #else self._readUnspecifiedAVFormat(metadata, 
-            metadata.samplerate = str(audio.info.sample_rate)
-            metadata.duration = self._formatedDuration(audio.info.length)
-        except mutagen.MutagenError:
-            try: audio = mutagen.apev2.APEv2(file)
-            except: return
-            knownFileType = False
         metadata.album = audio.get('Album', [placeholder])[0]
         metadata.artist = self._formatedList(audio.get('Artist', [placeholder]))
         author = audio.get('Composer')
-        if author is None: 
+        if author is None:
             author = audio.get('Lyricist')
             if author is None: author = audio.get('Writer')
         if author is not None: metadata.author = self._formatedList(author)
@@ -378,9 +327,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.date = self._formatedDate(date)
         metadata.year = date[:4]
 
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-    def _readUnspecifiedAVFormat( self, metadata, path, complete=True ):
+    def _fetchUnspecifiedAVMetadata( self, metadata, path, complete=True ):
         try: av = MediaInfo.parse(path)
         except: return
         general = av.tracks[0]
@@ -406,36 +353,78 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if general.movie_name is not None: metadata.title = general.movie_name
         elif general.track_name is not None: metadata.title = general.track_name
         elif general.title is not None: metadata.title = general.title
-        if general.released_date is not None: 
+        if general.released_date is not None:
             metadata.date = self._formatedDate(general.released_date)
             metadata.year = metadata.date[:4]
-        elif general.recorded_date is not None: 
+        elif general.recorded_date is not None:
             metadata.date = self._formatedDate(general.recorded_date)
             metadata.year = metadata.date[:4]
-        if general.track_name_position is not None: 
+        if general.track_name_position is not None:
             metadata.tracknumber = self._formatedTrackNumber(general.track_name_position)
-        
 
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    def _fetchMP4Metadata( self, metadata, file, fileSize ):
+        try: av = mutagen.mp4.MP4(file)
+        except: return
+        metadata.album = av.get('\xA9alb', [placeholder])[0]
+        metadata.artist = self._formatedList(av.get('\xA9ART', [placeholder]))
+        metadata.author = self._formatedList(av.get('\xA9wrt', [placeholder]))
+        metadata.bitrate = str(int(fileSize / (av.info.length * 125)))
+        metadata.comment = self._formatedList(av.get('\xA9cmt', [placeholder]))
+        metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
+        metadata.duration = self._formatedDuration(av.info.length)
+        metadata.genre = self._formatedList(av.get('\xA9gen', [placeholder]))
+        metadata.samplerate = str(av.info.sample_rate)
+        metadata.title = av.get('\xA9nam', [placeholder])[0]
+        metadata.tracknumber = self._formatedTrackNumber(str(av.get('trkn', [[None]])[0][0]))
+        metadata.year = av.get('\xA9day', [placeholder])[0][:4]
 
-    def _fetchAVMetadata( self, metadata, path, mime ):
+    def _fetchFLACMetadata( self, metadata, file ):
+        try: audio = mutagen.flac.FLAC(file)
+        except: return
+        metadata.album = audio.get('ALBUM', [placeholder])[0]
+        metadata.artist = self._formatedList(audio.get('ARTIST', [placeholder]))
+        author = audio.get('COMPOSER')
+        if author is None:
+            author = audio.get('LYRICIST')
+            if author is None: author = audio.get('WRITER')
+        if author is not None: metadata.author = self._formatedList(author)
+        metadata.bitrate = str(audio.info.bitrate / 1000)
+        metadata.comment = self._formatedList(audio.get('COMMENT', [placeholder]))
+        metadata.duration = self._formatedDuration(audio.info.length)
+        metadata.genre = self._formatedList(audio.get('GENRE', [placeholder]))
+        metadata.samplerate = str(audio.info.sample_rate)
+        metadata.title = audio.get('TITLE', [placeholder])[0]
+        metadata.tracknumber = self._formatedTrackNumber(audio.get('TRACKNUMBER', [placeholder])[0])
+        date = audio.get('DATE', [placeholder])[0][:10]
+        metadata.date = self._formatedDate(date)
+        metadata.year = date[:4]
+
+    def _fetchAVMetadata( self, metadata, path, mime, fileSize ):
         isVideo = mime[0] == 'v'
         with open(path, 'rb') as avfile:
-            filesig = avfile.read(8)
+            fileSignature = avfile.read(8)
             avfile.seek(os.stat(path).st_size - 32)
-            filetail = avfile.read(8)
+            fileTail = avfile.read(8)
             avfile.seek(0)
-            if filesig.startswith(b'fLa'): 
+            if fileSignature.startswith(b'fLa'):
                 self._fetchFLACMetadata(metadata, avfile)
-            elif filesig.endswith(b'ftyp') and not isVideo: 
-                self._fetchMP4Metadata(metadata, avfile)
-            elif filesig.startswith(b'ID3'): 
-                self._readID3(metadata, avfile)
-                self._readUnspecifiedAVFormat(metadata, path, complete=False)
-            elif filetail == b'APETAGEX': 
-                self._readAPEv2(metadata, avfile, filesig)
+            elif fileSignature.endswith(b'ftyp') and not isVideo:
+                self._fetchMP4Metadata(metadata, avfile, fileSize)
+            elif fileSignature.startswith(b'ID3'):
+                self._fetchID3Metadata(metadata, avfile)
+                self._fetchUnspecifiedAVMetadata(metadata, path, complete=False)
+            elif fileTail == b'APETAGEX':
+                self._fetchAPEv2Metadata(metadata, avfile)
+                self._fetchUnspecifiedAVMetadata(metadata, path, complete=False)
+            elif fileSignature.startswith(b'OFR'):
+                self._fetchAPEv2Metadata(metadata, avfile)
+                try: OptimFROGFile = mutagen.optimfrog.OptimFROG(file)
+                except: return
+                metadata.duration = self._formatedDuration(OptimFROGFile.info.length)
+                metadata.bitrate = str(int(fileSize / (av.info.length * 125)))
+                metadata.samplerate = str(OptimFROGFile.info.sample_rate)
             else:
-                self._readUnspecifiedAVFormat(metadata, path)
+                self._fetchUnspecifiedAVMetadata(metadata, path)
             #if mime.endswith(('/mpeg', 'mp2')): # audio/mpeg, audio/x-mp2
             #    info = mutagen.mp3.MPEGInfo(avfile)
             #    metadata.bitrate = str(info.bitrate/1000)
@@ -445,6 +434,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             #elif mime.endswith('aiff'): # audio/x-aiff
             #    info = mutagen.aiff.AIFFInfo(avfile)
             #    metadata.bitrate = str(info.bitrate/1000)
+            # DSF, MIDI
             #metadata.samplerate = str(info.sample_rate)
             #metadata.duration = self._formatedDuration(info.length)
 
@@ -463,7 +453,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             except: pass
             try: metadata.exif_flash = str(image['Exif.Photo.Flash'].raw_value)
             except: pass
-        except: 
+        except:
             pass
         try:
             image = Image.open(path)
@@ -473,7 +463,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             pass
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    
+
     def _assignNothingToFile( self, file ):
         file.add_string_attribute('album', placeholder)
         file.add_string_attribute('artist', placeholder)
@@ -493,12 +483,12 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         file.add_string_attribute('width', placeholder)
         file.add_string_attribute('year', placeholder)
         file.add_string_attribute('exif_flash', placeholder)
-        
+
     def _assignMetadataToFile( self, file, metadata ):
         file.add_string_attribute('album', metadata.album)
         file.add_string_attribute('artist', metadata.artist)
         file.add_string_attribute('author', metadata.author)
-        file.add_string_attribute('bitrate', metadata.bitrate + 
+        file.add_string_attribute('bitrate', metadata.bitrate +
             (' kbps' if (metadata.bitrate != placeholder) else ''))
         file.add_string_attribute('camera', metadata.camera)
         file.add_string_attribute('comment', metadata.comment)
@@ -511,7 +501,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         file.add_string_attribute('genre', metadata.genre)
         file.add_string_attribute('height', metadata.height)
         file.add_string_attribute('pages', metadata.pages)
-        file.add_string_attribute('samplerate', metadata.samplerate + 
+        file.add_string_attribute('samplerate', metadata.samplerate +
             (' Hz' if (metadata.samplerate != placeholder) else ''))
         file.add_string_attribute('title', metadata.title)
         file.add_string_attribute('tracknumber', metadata.tracknumber)
@@ -525,22 +515,21 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             previousMetadata = self._knownFiles.get(status.st_ino)
         else:
             isKnownJunk = status.st_size > maximumNonLocalFileSize
-            previousMetadata = None 
-            
+            previousMetadata = None
         if (isKnownJunk or (status.st_size <= 16)):
             self._assignNothingToFile(file)
         elif ((previousMetadata is not None) and (previousMetadata[0] >= status.st_mtime)):
             self._assignMetadataToFile(file, previousMetadata[1])
         else:
-            metadata = fileMetadata() 
+            metadata = fileMetadata()
             mime = file.get_mime_type()
             self._mute() # Muting to hide possible third-party complaints
             if mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
             elif mime.startswith(('aud', 'vid')):
-                self._fetchAVMetadata(metadata, path, mime)
+                self._fetchAVMetadata(metadata, path, mime, status.st_size)
             elif path.endswith(('.ofr', '.ofs', '.rmvb', '.rm', '.ram')):
-                self._fetchAVMetadata(metadata, path, mime)
+                self._fetchAVMetadata(metadata, path, mime, status.st_size)
             elif path.endswith(('.html', '.xhtml', '.htm')):
                 self._fetchHTMLMetadata(metadata, path)
             elif path.endswith('.desktop'):
@@ -555,7 +544,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (isLocal):
                 if (metadata.nonBlankFields() == 0): self._rememberJunk(status)
                 else: self._rememberMetadata(metadata, status)
-        
+
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
     def _usablePath( self, file ):
@@ -576,13 +565,13 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         return ''
 
     def update_file_info( self, file ):
-        if (file.get_uri_scheme() == 'file'): 
+        if (file.get_uri_scheme() == 'file'):
             path = os.path.realpath(unquote(file.get_uri()[7:]))
             isLocal = True
-        else: 
+        else:
             path = self._usablePath(file)
             isLocal = False
-        try: 
+        try:
             status = os.stat(path)
             file.add_string_attribute('inode', str(status.st_ino))
             fileType = file.get_file_type()
@@ -635,20 +624,20 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             Nautilus.Column(name='Metanautilus::year_col',         attribute='year',
                 label="Year",               description="Year"),
         )
-        
+
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    
+
     def _loadOrCreateCache( self, cacheDir, cacheFile, junkCacheFile ):
         if not (os.path.exists(cacheDir) and os.path.isdir(cacheDir)):
             try: os.makedirs(name=cacheDir)
             except OSError as e:
-                if (e.errno == errno.EEXIST) and os.path.isdir(path): 
+                if (e.errno == errno.EEXIST) and os.path.isdir(path):
                     pass
-                else: 
+                else:
                     self._logMessage("Failed to create cache folder", isWarning=True)
                     return
         if os.path.exists(cacheFile) and os.path.isfile(cacheFile):
-            try:  
+            try:
                 with open(cacheFile, 'rb') as cacheHandle: self._knownFiles = load(cacheHandle)
             except EOFError:
                 self._knownFiles = dict()
@@ -663,11 +652,11 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             with open(junkCacheFile, 'a'): pass
             self._knownJunk = dict()
-            
+
     def _initializeCache( self ):
         cacheDir = os.getenv("HOME") + '/.cache/metanautilus/'
         cacheFile = cacheDir + 'known-metadata'
-        junkCacheFile = cacheDir + 'known-junk'        
+        junkCacheFile = cacheDir + 'known-junk'
         self._loadOrCreateCache(cacheDir, cacheFile, junkCacheFile)
         self._knownMetadataMutex = Lock()
         self._knownJunkMutex = Lock()
