@@ -36,11 +36,10 @@ GObject.threads_init()
 from lxml import html, etree, objectify
 
 # Tool to handle ZIP-compressed formats
-import zipfile
+from zipfile import ZipFile
 
-# Tools to fetch metadata from images
-from PIL import Image
-import pyexiv2
+# Tools to fetch metadata from documents
+from PyPDF2 import PdfFileReader
 
 # Tools to fetch metadata from audio/video
 from pymediainfo import MediaInfo
@@ -49,9 +48,11 @@ import mutagen.smf
 import mutagen.id3, mutagen.mp3, mutagen.aac, mutagen.aiff, mutagen.dsf, mutagen.trueaudio
 import mutagen.apev2, mutagen.optimfrog
 
-from PyPDF2 import PdfFileReader     # for reading PDF
-from ebooklib import epub            # for reading EPUB
+# Tools to fetch metadata from images
+from PIL import Image
+import pyexiv2
 
+# Tools to fetch metadata from other kinds of files
 from torrentool.api import Torrent
 
 # =============================================================================================
@@ -251,10 +252,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # PERFORMING SOME FETCHING SUBTASKS
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     
-    def _parsedZIPXML( self, path, internalMetadataFile ):
-        try: XMLMetadataFile = zipfile.ZipFile(path, 'r').open(internalMetadataFile)
-        except: return None
-        try: parsedXML = etree.parse(XMLMetadataFile, etree.XMLParser(remove_blank_text=True, remove_comments=True))
+    def _parsedXML( self, file ):
+        try: parsedXML = etree.parse(file, etree.XMLParser(remove_blank_text=True, remove_comments=True))
         except: return None
         for element in parsedXML.getroot().getiterator():
             if not hasattr(element.tag, 'find'): continue
@@ -267,12 +266,16 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     
     def _fetchEPUBMetadata( self, metadata, path ):
-        parsedXML = self._parsedZIPXML(path, 'content.opf')
+        try: XMLMetadataFile = ZipFile(path, 'r').open('content.opf')
+        except: return
+        parsedXML = self._parsedXML(XMLMetadataFile)
         if (parsedXML is None): return
         field = parsedXML.find('//creator')
         if (field is not None): metadata.author = field.text
         field = parsedXML.find('//description')
         if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
+        #field = parsedXML.find('//publisher')
+        #if (field is not None): metadata.company = field.text
         field = parsedXML.find('//date')
         if (field is not None): 
             metadata.date = field.text[:10]
@@ -301,19 +304,29 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if comment is not None: metadata.comment = self._formatedString(comment.get('content'))
 
     def _fetchOpenDocumentMetadata( self, metadata, path ):
-        self._unmute()
-        parsedXML = self._parsedZIPXML(path, 'meta.xml')
-        if (parsedXML is None): return
-        field = parsedXML.find('//title')
-        if (field is not None): metadata.title = field.text
+        with open(path, 'rb') as document:
+            fileSignature = document.read(2)
+            document.seek(0)
+            if (fileSignature == b'<?'):
+                try: parsedXML = self._parsedXML(document)
+                except: return
+            else:
+                try: XMLMetadataFile = ZipFile(path, 'r').open('meta.xml')
+                except: return
+                parsedXML = self._parsedXML(XMLMetadataFile)
+                if (parsedXML is None): return
+        field = parsedXML.find('//initial-creator')
+        if (field is None): field = parsedXML.find('//creator')
+        if (field is not None): metadata.author = field.text
         field = parsedXML.find('//creation-date')
         if (field is None): field = parsedXML.find('//date')
         if (field is not None): 
             metadata.date = field.text[:10]
             metadata.year = metadata.date[:4]
-        field = parsedXML.find('//initial-creator')
-        if (field is None): field = parsedXML.find('//creator')
-        if (field is not None): metadata.author = field.text
+        field = parsedXML.find('//description')
+        if (field is not None): metadata.comment = self._formatedString(field.text)
+        field = parsedXML.find('//title')
+        if (field is not None): metadata.title = field.text
 
     def _fetchPDFMetadata( self, metadata, path ):
         with open(path, 'rb') as documentFile:
@@ -593,7 +606,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             metadata = fileMetadata()
             mime = file.get_mime_type()
-            #self._mute() # Muting to hide possible third-party complaints
+            self._mute() # Muting to hide possible third-party complaints
             if mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
             elif mime.startswith(('aud', 'vid')):
@@ -604,7 +617,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 self._fetchHTMLMetadata(metadata, path)
             elif path.endswith('.desktop'):
                 self._fetchDesktopEntryMetadata(metadata, path)
-            elif path.endswith(('.odt', '.ods', '.odp')):
+            elif path.endswith(('.odt', '.ods', '.odp', '.odg', '.fodt', '.fods', '.fodp', '.fodg')):
                 self._fetchOpenDocumentMetadata(metadata, path)
             elif mime.startswith('app'):
                 mime = mime[12:]
