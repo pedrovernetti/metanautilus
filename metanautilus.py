@@ -20,7 +20,7 @@ from threading import Thread, activeCount, Lock
 from datetime import datetime
 from time import sleep
 from urllib import unquote
-from pickle import dump, load, HIGHEST_PROTOCOL
+from pickle import dump, load, PickleError, HIGHEST_PROTOCOL
 if (pythonIs2OrOlder): import Queue as queue
 else: import queue as queue
 
@@ -583,16 +583,29 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             #metadata.samplerate = str(info.sample_rate)
             #metadata.duration = self._formatedDuration(info.length)
             
+    def _fetchSubRipMetadata( self, metadata, path ):
+        try: subtitles = open(path, 'r')
+        except: return
+        timeRegex = re.compile('[0-9][0-9]:[0-9][0-9]:[0-9][0-9],[0-9][0-9][0-9]')
+        times = [line for line in subtitles if timeRegex.match(line)]
+        size = subtitles.tell()
+        if (len(times) > 0): 
+            metadata.duration = times[-1].strip()[-12:-4]
+            duration = metadata.duration.split(':')
+            duration = (int(duration[0]) * 2400) + (int(duration[1]) * 60) + int(duration[2])
+            metadata.bitrate = str((size / duration) * 8) + ' bps'
+            
     def _fetchXSPFMetadata( self, metadata, path ):
         with open(path, 'r') as playlist:
             try: parsedXML = self._parsedXML(playlist)
             except: return
             if (parsedXML is None): return
-        field = parsedXML.find('//initial-creator')
-        if (field is None): field = parsedXML.find('//creator')
-        if (field is not None): metadata.author = self._formatedString(field.text)
-        field = parsedXML.find('//description')
+        field = parsedXML.find('//info')
+        if (field is None): field = parsedXML.find('//description')
+        if (field is None): field = parsedXML.find('//comment')
         if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
+        field = parsedXML.find('//title')
+        if (field is not None): metadata.title = self._formatedString(field.text)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FETCHING METADATA FROM OTHER KINDS OF FILES
@@ -652,7 +665,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         file.add_string_attribute('artist', metadata.artist)
         file.add_string_attribute('author', metadata.author)
         file.add_string_attribute('bitrate', metadata.bitrate +
-            (' kbps' if (metadata.bitrate != placeholder) else ''))
+            (' kbps' if ((metadata.bitrate != placeholder) and (metadata.bitrate[-1] != 's')) else ''))
         file.add_string_attribute('camera', metadata.camera)
         file.add_string_attribute('comment', metadata.comment)
         file.add_string_attribute('date', metadata.date)
@@ -686,10 +699,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             metadata = fileMetadata()
             mime = file.get_mime_type()
-            #self._mute() # Muting to hide possible third-party complaints
+            self._mute() # Muting to hide possible third-party complaints
             mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:])
             if mappedMethod is not None:
-                mappedMethod(metadata, path)
+                (eval(mappedMethod))(metadata, path)
             elif mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
             elif mime.startswith(('aud', 'vid')):
@@ -796,7 +809,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
     def _loadOrCreateCache( self, cacheDir, cacheFile, junkCacheFile ):
-        if not (os.path.exists(cacheDir) and os.path.isdir(cacheDir)):
+        if (not (os.path.exists(cacheDir) and os.path.isdir(cacheDir))):
             try: os.makedirs(name=cacheDir)
             except OSError as e:
                 if (e.errno == errno.EEXIST) and os.path.isdir(path):
@@ -804,7 +817,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 else:
                     self._logMessage("Failed to create cache folder", isWarning=True)
                     return
-        if os.path.exists(cacheFile) and os.path.isfile(cacheFile):
+        if (os.path.exists(cacheFile) and os.path.isfile(cacheFile)):
             try:
                 with open(cacheFile, 'rb') as cacheHandle: self._knownFiles = load(cacheHandle)
             except EOFError:
@@ -812,7 +825,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             with open(cacheFile, 'a'): pass
             self._knownFiles = dict()
-        if os.path.exists(junkCacheFile) and os.path.isfile(junkCacheFile):
+        if (os.path.exists(junkCacheFile) and os.path.isfile(junkCacheFile)):
             try:
                 with open(junkCacheFile, 'rb') as cacheHandle: self._knownJunk = load(cacheHandle)
             except EOFError:
@@ -836,35 +849,37 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         
     def _initializeSuffixToMethodMap( self ):
         self._suffixToMethodMap = dict()
-        self._suffixToMethodMap['desktop'] = self._fetchDesktopEntryMetadata
-        self._suffixToMethodMap['docx'] = self._fetchOfficeOpenXMLMetadata
-        self._suffixToMethodMap['epub'] = self._fetchEPUBMetadata
-        self._suffixToMethodMap['flac'] = self._fetchFLACMetadata
-        self._suffixToMethodMap['fodg'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['fodp'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['fods'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['fodt'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['html'] = self._fetchHTMLMetadata
-        self._suffixToMethodMap['htm'] = self._fetchHTMLMetadata
-        self._suffixToMethodMap['html'] = self._fetchHTMLMetadata
-        self._suffixToMethodMap['m4a'] = self._fetchMP4Metadata
-        self._suffixToMethodMap['m4b'] = self._fetchMP4Metadata
-        self._suffixToMethodMap['m4p'] = self._fetchMP4Metadata
-        self._suffixToMethodMap['md'] = self._fetchMarkdownMetadata
-        self._suffixToMethodMap['odg'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['odp'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['ods'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['odt'] = self._fetchOpenDocumentMetadata
-        self._suffixToMethodMap['pdf'] = self._fetchPDFMetadata
-        self._suffixToMethodMap['pptx'] = self._fetchOfficeOpenXMLMetadata
-        self._suffixToMethodMap['ra'] = self._fetchUnspecifiedAVMetadata
-        self._suffixToMethodMap['ram'] = self._fetchUnspecifiedAVMetadata
-        self._suffixToMethodMap['rm'] = self._fetchUnspecifiedAVMetadata
-        self._suffixToMethodMap['rmvb'] = self._fetchUnspecifiedAVMetadata
-        self._suffixToMethodMap['xhtml'] = self._fetchHTMLMetadata
-        self._suffixToMethodMap['xlsx'] = self._fetchOfficeOpenXMLMetadata
-        self._suffixToMethodMap['torrent'] = self._fetchTorrentMetadata
-        self._suffixToMethodMap['zip'] = self._fetchZIPMetadata
+        self._suffixToMethodMap['desktop'] = 'self._fetchDesktopEntryMetadata'
+        self._suffixToMethodMap['docx'] = 'self._fetchOfficeOpenXMLMetadata'
+        self._suffixToMethodMap['epub'] = 'self._fetchEPUBMetadata'
+        self._suffixToMethodMap['flac'] = 'self._fetchFLACMetadata'
+        self._suffixToMethodMap['fodg'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['fodp'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['fods'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['fodt'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['html'] = 'self._fetchHTMLMetadata'
+        self._suffixToMethodMap['htm'] = 'self._fetchHTMLMetadata'
+        self._suffixToMethodMap['html'] = 'self._fetchHTMLMetadata'
+        self._suffixToMethodMap['m4a'] = 'self._fetchMP4Metadata'
+        self._suffixToMethodMap['m4b'] = 'self._fetchMP4Metadata'
+        self._suffixToMethodMap['m4p'] = 'self._fetchMP4Metadata'
+        self._suffixToMethodMap['md'] = 'self._fetchMarkdownMetadata'
+        self._suffixToMethodMap['odg'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['odp'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['ods'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['odt'] = 'self._fetchOpenDocumentMetadata'
+        self._suffixToMethodMap['pdf'] = 'self._fetchPDFMetadata'
+        self._suffixToMethodMap['pptx'] = 'self._fetchOfficeOpenXMLMetadata'
+        self._suffixToMethodMap['ra'] = 'self._fetchUnspecifiedAVMetadata'
+        self._suffixToMethodMap['ram'] = 'self._fetchUnspecifiedAVMetadata'
+        self._suffixToMethodMap['rm'] = 'self._fetchUnspecifiedAVMetadata'
+        self._suffixToMethodMap['rmvb'] = 'self._fetchUnspecifiedAVMetadata'
+        self._suffixToMethodMap['srt'] = 'self._fetchSubRipMetadata'
+        self._suffixToMethodMap['xhtml'] = 'self._fetchHTMLMetadata'
+        self._suffixToMethodMap['xlsx'] = 'self._fetchOfficeOpenXMLMetadata'
+        self._suffixToMethodMap['xspf'] = 'self._fetchXSPFMetadata'
+        self._suffixToMethodMap['torrent'] = 'self._fetchTorrentMetadata'
+        self._suffixToMethodMap['zip'] = 'self._fetchZIPMetadata'
 
     def __init__( self ):
         self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
