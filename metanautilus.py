@@ -36,10 +36,12 @@ GObject.threads_init()
 from lxml import html, etree, objectify
 
 # Tool to handle ZIP-compressed formats
-from zipfile import ZipFile
+from zipfile import ZipFile as ZIPFile
 
 # Tools to fetch metadata from documents
-from PyPDF2 import PdfFileReader
+import re
+from PyPDF2 import PdfFileReader as PDFFile
+from PyPDF2.generic import IndirectObject as PDFIndirectObject
 
 # Tools to fetch metadata from audio/video
 from pymediainfo import MediaInfo
@@ -200,30 +202,52 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FORMATTING METADATA
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    
+    def _reformatedDate( self, dateString ):
+        if (re.compile(r'^[0-9][0-9]?/[0-9][0-9]?/[0-9]{4}.*$').match(dateString)):
+            dateString = dateString.split('/')
+            if (int(dateString[1]) > 12):
+                month = '%02i' % int(dateString[0])
+                day = '%02i' % int(dateString[1])
+            else:
+                month = '%02i' % int(dateString[1])
+                day = '%02i' % int(dateString[0])
+            return (dateString[2][:4] + '-' + month + '-' + day)
+        else:
+            return placeholder
 
     def _formatedDate( self, dateString ):
-        size = len(dateString)
-        if (size >= 10): return dateString[:10]
-        elif (size == 4): return dateString + '-??-??'
-        elif (size == 7): return dateString + '-??'
+        if (dateString is None): return placeholder
+        finalString = ''
+        for c in str(dateString):
+            if ((c <= '9') and (c >= '0')): finalString += c
+            elif (c == '/'): return self._reformatedDate(dateString)
+        size = len(finalString)
+        if (size >= 8): return (finalString[:4] + '-' + finalString[4:][:2] + '-' + finalString[6:][:2])
+        elif (size >= 6): return (finalString[:4] + '-' + finalString[4:][:2] + '-??')
+        elif (size >= 4): return (finalString[:4] + '-??-??')
         else: return placeholder
 
     def _formatedDuration( self, secs ):
         return '%02i:%02i:%02i' % ((int(secs/3600)), (int(secs/60%60)), (int(secs%60)))
         
     def _formatedHTMLPiece( self, htmlString ):
-        finalString = html.document_fromstring(htmlString).text_content().replace('\n', r'')
-        if (len(finalString) <= maxFieldSize): return finalString
+        if (htmlString is None): return placeholder
+        finalString = html.document_fromstring(unicode(htmlString)).text_content().replace('\n', r'')
+        if (len(finalString) < 1): return placeholder
+        if (len(finalString) <= maxFieldSize): return unicode(finalString)
         else: return (finalString[:(maxFieldSize - 3)] + ' [...]')
 
     def _formatedNumber( self, numberString ):
         finalString = ''
         for c in numberString:
-            if (c > '9') or (c < '0'): finalString += c
+            if (c <= '9') and (c >= '0'): finalString += c
         return finalString
 
     def _formatedString( self, anyString ):
+        if (anyString is None): return placeholder
         anyString = unicode(anyString)
+        if (len(anyString) < 1): return placeholder
         if (len(anyString) > maxFieldSize): anyString = anyString[:(maxFieldSize - 3)] + ' [...]'
         return anyString.replace('\x00', r'').replace('\n', r'')
 
@@ -234,6 +258,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         finalString = u''
         for item in stringList: 
             item = unicode(item)
+            if (len(item) <= 1): continue
             if ((len(finalString) + len(item)) > maxFieldSize): 
                 return ((finalString + '...') if (len(finalString) > 0) else self._formatedString(item))
             finalString += item + '; '
@@ -249,7 +274,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         return trackNumberString[:pos]
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    # PERFORMING SOME FETCHING SUBTASKS
+    # PERFORMING SOME SUBTASKS
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     
     def _parsedXML( self, file ):
@@ -266,7 +291,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     
     def _fetchEPUBMetadata( self, metadata, path ):
-        try: XMLMetadataFile = ZipFile(path, 'r').open('content.opf')
+        try: XMLMetadataFile = ZIPFile(path, 'r').open('content.opf')
         except: return
         parsedXML = self._parsedXML(XMLMetadataFile)
         if (parsedXML is None): return
@@ -301,7 +326,39 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if comment is None: comment = xml.find('.//meta[@property="og:description"]')
         if comment is None: comment = xml.find('.//meta[@name="comment"]')
         if comment is None: comment = xml.find('.//meta[@name="parselycomment"]')
-        if comment is not None: metadata.comment = self._formatedString(comment.get('content'))
+        if comment is not None: metadata.comment = self._formatedHTMLPiece(comment.get('content'))
+        
+    def _fetchMarkdownMetadata( self, metadata, path ):
+        try: document = open(path, 'r')
+        except: return
+        title = [line for line in document if re.match(r'^[\t ]*# .*$', line)]
+        if (len(title) > 0): 
+            metadata.title = re.sub(r'^[\t ]*# ', '', title[0]).strip()
+            
+    def _fetchOfficeOpenXMLMetadata( self, metadata, path ):
+        try: document = ZIPFile(path, 'r')
+        except: return
+        with document.open('docProps/app.xml') as XMLMetadataFile:
+            parsedXML = self._parsedXML(XMLMetadataFile)
+            if (parsedXML is None): return
+            field = parsedXML.find('//Pages')
+            if (field is None): field = parsedXML.find('//Slides')
+            if (field is not None): metadata.pages = self._formatedString(field.text)
+            #field = parsedXML.find('//Company')
+            #if (field is not None): metadata.company = self._formatedString(field.text)
+        with document.open('docProps/core.xml') as XMLMetadataFile:
+            parsedXML = self._parsedXML(XMLMetadataFile)
+            if (parsedXML is None): return
+            field = parsedXML.find('//creator')
+            if (field is not None): metadata.author = self._formatedString(field.text)
+            field = parsedXML.find('//created')
+            if (field is not None): 
+                metadata.date = self._formatedDate(field.text)
+                metadata.year = metadata.date[:4]
+            field = parsedXML.find('//description')
+            if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
+            field = parsedXML.find('//title')
+            if (field is not None): metadata.title = self._formatedString(field.text)
 
     def _fetchOpenDocumentMetadata( self, metadata, path ):
         with open(path, 'rb') as document:
@@ -311,34 +368,43 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 try: parsedXML = self._parsedXML(document)
                 except: return
             else:
-                try: XMLMetadataFile = ZipFile(path, 'r').open('meta.xml')
+                try: XMLMetadataFile = ZIPFile(path, 'r').open('meta.xml')
                 except: return
                 parsedXML = self._parsedXML(XMLMetadataFile)
                 if (parsedXML is None): return
         field = parsedXML.find('//initial-creator')
         if (field is None): field = parsedXML.find('//creator')
-        if (field is not None): metadata.author = field.text
+        if (field is not None): metadata.author = self._formatedString(field.text)
+        field = parsedXML.find('//description')
+        if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
         field = parsedXML.find('//creation-date')
         if (field is None): field = parsedXML.find('//date')
         if (field is not None): 
-            metadata.date = field.text[:10]
+            metadata.date = self._formatedDate(field.text[:10])
             metadata.year = metadata.date[:4]
-        field = parsedXML.find('//description')
-        if (field is not None): metadata.comment = self._formatedString(field.text)
         field = parsedXML.find('//title')
-        if (field is not None): metadata.title = field.text
+        if (field is not None): metadata.title = self._formatedString(field.text)
 
     def _fetchPDFMetadata( self, metadata, path ):
-        with open(path, 'rb') as documentFile:
-            try: document = PdfFileReader(documentFile)
-            except: return
-            if document.isEncrypted: return
-            try: metadata.pages = str(document.getNumPages())
-            except: pass
-            try: info = document.documentInfo()
-            except: return
-            metadata.author = info.get('/Author', placeholder)
-            metadata.title = info.get('/Title', placeholder)
+        try: document = PDFFile(path, strict=False)
+        except: return
+        if document.isEncrypted: return
+        metadata.pages = str(document.numPages)
+        info = document.documentInfo
+        author = info.get('/Author')
+        if isinstance(author, PDFIndirectObject): author = document.getObject(author)
+        metadata.author = self._formatedString(author) if (author is not None) else placeholder
+        #company = info.get('/EBX_PUBLISHER', placeholder)
+        #if isinstance(company, PDFIndirectObject): company = document.getObject(company)
+        #metadata.company = self._formatedString(company) if (company is not None) else placeholder
+        date = info.get('/CreationDate')
+        if isinstance(date, PDFIndirectObject): date = document.getObject(date)
+        if (date is not None):
+            metadata.date = self._formatedDate(date)
+            metadata.year = metadata.date[:4]
+        title = info.get('/Title', placeholder)
+        if isinstance(title, PDFIndirectObject): title = document.getObject(title)
+        metadata.title = self._formatedString(title) if (title is not None) else placeholder
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FETCHING METADATA FROM IMAGES
@@ -430,7 +496,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         elif general.composer is not None: metadata.author = general.composer
         elif general.lyricist is not None: metadata.author = general.lyricist
         elif general.writer is not None: metadata.author = general.writer
-        if general.comment is not None: metadata.comment = general.comment
+        if general.comment is not None: metadata.comment = self._formatedString(general.comment)
         if general.genre is not None: metadata.genre = general.genre
         if general.movie_name is not None: metadata.title = general.movie_name
         elif general.track_name is not None: metadata.title = general.track_name
@@ -525,13 +591,13 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
     def _fetchDesktopEntryMetadata( self, metadata, path ):
-        with open(path, 'r') as textfile:
-            for line in myfile:
-                key, value = line.split('=', 1)
-                if (key == 'Name'): metadata.title = value
-                elif (key == 'Comment'): metadata.comment = value
-                elif (key == 'Categories'): metadata.genre = value.replace(';', '; ')
-            if (metadata.genre[-2:] == '; '): metadata.genre = metadata.genre[:-2]
+        with open(path, 'r') as desktopEntry:
+            for line in desktopEntry:
+                line = line.split('=', 1)
+                if (len(line) != 2): continue
+                if (line[0] == 'Name'): metadata.title = self._formatedString(line[1])
+                elif (line[0] == 'Comment'): metadata.comment = self._formatedString(line[1])
+                elif (line[0] == 'Categories'): metadata.genre = self._formatedStringList(line[1].split(';'))
             
     def _fetchTorrentMetadata( self, metadata, path ):
         try: torrent = Torrent.from_file(path)
@@ -540,7 +606,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if torrent.creation_date is not None:
             metadata.date = torrent.creation_date.isoformat()[:10]
             metadata.year = metadata.date[:4]
-        if torrent.comment is not None: metadata.comment = torrent.comment
+        if torrent.comment is not None: metadata.comment = self._formatedString(torrent.comment)
         if torrent.name is not None: metadata.title = torrent.name
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
@@ -606,19 +672,19 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             metadata = fileMetadata()
             mime = file.get_mime_type()
-            self._mute() # Muting to hide possible third-party complaints
-            if mime.startswith('ima'):
+            #self._mute() # Muting to hide possible third-party complaints
+            mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:])
+            if mappedMethod is not None:
+                mappedMethod(metadata, path)
+            elif mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
             elif mime.startswith(('aud', 'vid')):
                 self._fetchAVMetadata(metadata, path, mime, status.st_size)
-            elif path.endswith(('.ofr', '.ofs', '.rmvb', '.rm', '.ram')):
+            elif path.endswith(('.ofr', '.ofs')):
                 self._fetchAVMetadata(metadata, path, mime, status.st_size)
-            elif path.endswith(('.html', '.xhtml', '.htm')):
-                self._fetchHTMLMetadata(metadata, path)
-            elif path.endswith('.desktop'):
-                self._fetchDesktopEntryMetadata(metadata, path)
-            elif path.endswith(('.odt', '.ods', '.odp', '.odg', '.fodt', '.fods', '.fodp', '.fodg')):
-                self._fetchOpenDocumentMetadata(metadata, path)
+            elif path.endswith('.zip'):
+                comment = ZIPFile(path, 'r').comment.decode('utf-8', errors='ignore')
+                if (len(comment) > 0): metadata.comment = self._formatedString(comment)
             elif mime.startswith('app'):
                 mime = mime[12:]
                 if mime.endswith('pdf'): self._fetchPDFMetadata(metadata, path)
@@ -758,6 +824,32 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         pickler = Thread(target=self._keepKnownInformationPickled, args=(cacheFile,junkCacheFile))
         pickler.daemon = True
         pickler.start()
+        
+    def _initializeSuffixToMethodMap( self ):
+        self._suffixToMethodMap = dict()
+        self._suffixToMethodMap['desktop'] = self._fetchDesktopEntryMetadata
+        self._suffixToMethodMap['docx'] = self._fetchOfficeOpenXMLMetadata
+        self._suffixToMethodMap['epub'] = self._fetchEPUBMetadata
+        self._suffixToMethodMap['fodg'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['fodp'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['fods'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['fodt'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['html'] = self._fetchHTMLMetadata
+        self._suffixToMethodMap['htm'] = self._fetchHTMLMetadata
+        self._suffixToMethodMap['html'] = self._fetchHTMLMetadata
+        self._suffixToMethodMap['md'] = self._fetchMarkdownMetadata
+        self._suffixToMethodMap['odg'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['odp'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['ods'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['odt'] = self._fetchOpenDocumentMetadata
+        self._suffixToMethodMap['pdf'] = self._fetchPDFMetadata
+        self._suffixToMethodMap['pptx'] = self._fetchOfficeOpenXMLMetadata
+        self._suffixToMethodMap['ra'] = self._fetchUnspecifiedAVMetadata
+        self._suffixToMethodMap['rm'] = self._fetchUnspecifiedAVMetadata
+        self._suffixToMethodMap['rmvb'] = self._fetchUnspecifiedAVMetadata
+        self._suffixToMethodMap['xhtml'] = self._fetchHTMLMetadata
+        self._suffixToMethodMap['xlsx'] = self._fetchOfficeOpenXMLMetadata
+        self._suffixToMethodMap['torrent'] = self._fetchTorrentMetadata
 
     def __init__( self ):
         self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
@@ -765,6 +857,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
         self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
         self._initializeCache()
+        self._initializeSuffixToMethodMap()
 
 # =============================================================================================
 
