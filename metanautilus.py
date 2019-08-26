@@ -47,7 +47,7 @@ from PyPDF2.generic import IndirectObject as PDFIndirectObject
 from pymediainfo import MediaInfo
 import mutagen.flac, mutagen.mp4
 import mutagen.smf
-import mutagen.id3, mutagen.mp3, mutagen.aac, mutagen.aiff, mutagen.dsf, mutagen.trueaudio
+import mutagen.id3, mutagen.aac, mutagen.aiff, mutagen.dsf, mutagen.trueaudio
 import mutagen.apev2, mutagen.optimfrog
 
 # Tools to fetch metadata from images
@@ -187,17 +187,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             else: cycle += 1
             sleep(12)
 
-    def _rememberMetadata( self, metadata, fileStatus ):
-        self._knownMetadataMutex.acquire()
-        self._knownFiles[fileStatus.st_ino] = (fileStatus.st_mtime, metadata)
-        self._unpickledKnownJunk += 1
-        self._knownMetadataMutex.release()
-
-    def _rememberJunk( self, fileStatus ):
-        self._knownJunkMutex.acquire()
-        self._knownJunk[fileStatus.st_ino] = fileStatus.st_mtime
-        self._unpickledKnownFiles += 1
-        self._knownJunkMutex.release()
+    def _remember( self, metadata, fileStatus ):
+        if (metadata.nonBlankFields() == 0):
+            self._knownJunkMutex.acquire()
+            self._knownJunk[fileStatus.st_ino] = fileStatus.st_mtime
+            self._unpickledKnownFiles += 1
+            self._knownJunkMutex.release()
+        else:
+            self._knownMetadataMutex.acquire()
+            self._knownFiles[fileStatus.st_ino] = (fileStatus.st_mtime, metadata)
+            self._unpickledKnownJunk += 1
+            self._knownMetadataMutex.release()
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FORMATTING METADATA
@@ -371,7 +371,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 try: XMLMetadataFile = ZIPFile(path, 'r').open('meta.xml')
                 except: return
                 parsedXML = self._parsedXML(XMLMetadataFile)
-                if (parsedXML is None): return
+            if (parsedXML is None): return
         field = parsedXML.find('//initial-creator')
         if (field is None): field = parsedXML.find('//creator')
         if (field is not None): metadata.author = self._formatedString(field.text)
@@ -573,9 +573,6 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 metadata.samplerate = str(OptimFROGFile.info.sample_rate)
             else:
                 self._fetchUnspecifiedAVMetadata(metadata, path)
-            #if mime.endswith(('/mpeg', 'mp2')): # audio/mpeg, audio/x-mp2
-            #    info = mutagen.mp3.MPEGInfo(avfile)
-            #    metadata.bitrate = str(info.bitrate/1000)
             #elif mime.endswith('/aac'): # audio/aac
             #    info = mutagen.aac.AACInfo(avfile)
             #    metadata.bitrate = str(info.bitrate/1000)
@@ -585,6 +582,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             # DSF, MIDI
             #metadata.samplerate = str(info.sample_rate)
             #metadata.duration = self._formatedDuration(info.length)
+            
+    def _fetchXSPFMetadata( self, metadata, path ):
+        with open(path, 'r') as playlist:
+            try: parsedXML = self._parsedXML(playlist)
+            except: return
+            if (parsedXML is None): return
+        field = parsedXML.find('//initial-creator')
+        if (field is None): field = parsedXML.find('//creator')
+        if (field is not None): metadata.author = self._formatedString(field.text)
+        field = parsedXML.find('//description')
+        if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FETCHING METADATA FROM OTHER KINDS OF FILES
@@ -608,6 +616,12 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             metadata.year = metadata.date[:4]
         if torrent.comment is not None: metadata.comment = self._formatedString(torrent.comment)
         if torrent.name is not None: metadata.title = torrent.name
+        
+    def _fetchZIPMetadata( self, metadata, path ):
+        try: archive = ZIPFile(path, 'r')
+        except: return
+        comment = archive.comment.decode('utf-8', errors='ignore')
+        if (len(comment) > 0): metadata.comment = self._formatedString(comment)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # CALLING THE PROPER FETCHING FUNCTIONS, THEN ASSIGNING THE METADATA TO EACH FILE
@@ -633,7 +647,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         file.add_string_attribute('year', placeholder)
         file.add_string_attribute('exif_flash', placeholder)
 
-    def _assignMetadataToFile( self, file, metadata ):
+    def _assignMetadataToFile( self, metadata, file ):
         file.add_string_attribute('album', metadata.album)
         file.add_string_attribute('artist', metadata.artist)
         file.add_string_attribute('author', metadata.author)
@@ -668,7 +682,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (isKnownJunk or (status.st_size <= 16)):
             self._assignNothingToFile(file)
         elif ((previousMetadata is not None) and (previousMetadata[0] >= status.st_mtime)):
-            self._assignMetadataToFile(file, previousMetadata[1])
+            self._assignMetadataToFile(previousMetadata[1], file)
         else:
             metadata = fileMetadata()
             mime = file.get_mime_type()
@@ -682,19 +696,14 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 self._fetchAVMetadata(metadata, path, mime, status.st_size)
             elif path.endswith(('.ofr', '.ofs')):
                 self._fetchAVMetadata(metadata, path, mime, status.st_size)
-            elif path.endswith('.zip'):
-                comment = ZIPFile(path, 'r').comment.decode('utf-8', errors='ignore')
-                if (len(comment) > 0): metadata.comment = self._formatedString(comment)
             elif mime.startswith('app'):
                 mime = mime[12:]
                 if mime.endswith('pdf'): self._fetchPDFMetadata(metadata, path)
                 elif mime.startswith('epub'): self._fetchEPUBMetadata(metadata, path)
                 elif mime.endswith('torrent'): self._fetchTorrentMetadata(metadata, path)
             self._unmute()
-            self._assignMetadataToFile(file, metadata)
-            if (isLocal):
-                if (metadata.nonBlankFields() == 0): self._rememberJunk(status)
-                else: self._rememberMetadata(metadata, status)
+            self._assignMetadataToFile(metadata, file)
+            if (isLocal): self._remember(metadata, status)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # HANDLING (PRELIMINARILY) OR SKIPPING EACH FILE
@@ -830,6 +839,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._suffixToMethodMap['desktop'] = self._fetchDesktopEntryMetadata
         self._suffixToMethodMap['docx'] = self._fetchOfficeOpenXMLMetadata
         self._suffixToMethodMap['epub'] = self._fetchEPUBMetadata
+        self._suffixToMethodMap['flac'] = self._fetchFLACMetadata
         self._suffixToMethodMap['fodg'] = self._fetchOpenDocumentMetadata
         self._suffixToMethodMap['fodp'] = self._fetchOpenDocumentMetadata
         self._suffixToMethodMap['fods'] = self._fetchOpenDocumentMetadata
@@ -837,6 +847,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._suffixToMethodMap['html'] = self._fetchHTMLMetadata
         self._suffixToMethodMap['htm'] = self._fetchHTMLMetadata
         self._suffixToMethodMap['html'] = self._fetchHTMLMetadata
+        self._suffixToMethodMap['m4a'] = self._fetchMP4Metadata
+        self._suffixToMethodMap['m4b'] = self._fetchMP4Metadata
+        self._suffixToMethodMap['m4p'] = self._fetchMP4Metadata
         self._suffixToMethodMap['md'] = self._fetchMarkdownMetadata
         self._suffixToMethodMap['odg'] = self._fetchOpenDocumentMetadata
         self._suffixToMethodMap['odp'] = self._fetchOpenDocumentMetadata
@@ -845,11 +858,13 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._suffixToMethodMap['pdf'] = self._fetchPDFMetadata
         self._suffixToMethodMap['pptx'] = self._fetchOfficeOpenXMLMetadata
         self._suffixToMethodMap['ra'] = self._fetchUnspecifiedAVMetadata
+        self._suffixToMethodMap['ram'] = self._fetchUnspecifiedAVMetadata
         self._suffixToMethodMap['rm'] = self._fetchUnspecifiedAVMetadata
         self._suffixToMethodMap['rmvb'] = self._fetchUnspecifiedAVMetadata
         self._suffixToMethodMap['xhtml'] = self._fetchHTMLMetadata
         self._suffixToMethodMap['xlsx'] = self._fetchOfficeOpenXMLMetadata
         self._suffixToMethodMap['torrent'] = self._fetchTorrentMetadata
+        self._suffixToMethodMap['zip'] = self._fetchZIPMetadata
 
     def __init__( self ):
         self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
