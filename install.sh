@@ -1,65 +1,59 @@
 #!/bin/bash
 
-if [[ ("$1" == '--not-ubuntu' ) || ( $(lsb_release -is | tr '[:upper:]' '[:lower:]') != "ubuntu" ) ]]; then
-	printf "This installation script is for Ubuntu only...\n\n"
-	printf "\033[2m#0 Choose between Python 2 (at source/) and Python 3 (at source3/) versions...\033[0m\n"
-	printf "#1 Install Mutagen, pyexiv2, Kaa Metadata and pypdf (Python modules)\n"
-	printf "#2 Install python-nautilus via your package manager\n"
-	printf "#3 Check where python-nautilus extension must be placed in your system\n"
-	printf "   and place a copy of the chosen \033[3m.py\033[0m there with execute permission\n\n"
-	exit 1
-	fi
+tryDoing()
+{
+    if ! $@; then
+        printf "\033[1;31mFAILED!\033[0m\n"
+        exit $end_status
+        fi
+}
 
 # get the script's own path
 if [[ "$0" != /* ]]; then
-	if [[ "$0" == './'* ]]; then declare -r selfpath="$PWD/${0#.\/}"
-	elif [[ -f "$PWD/$0" ]]; then declare -r selfpath="$PWD/$0"
-	else declare -r selfpath=$(find /bin /sbin /usr/bin /usr/sbin -type f -name '$0' -print 2>/dev/null); fi
+    if [[ "$0" == './'* ]]; then declare -r selfpath="$PWD/${0#.\/}"
+    elif [[ -f "$PWD/$0" ]]; then declare -r selfpath="$PWD/$0"
+    else declare -r selfpath=$(find /bin /sbin /usr/bin /usr/sbin -type f -name '$0' -print 2>/dev/null); fi
 else
-	declare -r selfpath="$0"
-	fi
+    declare -r selfpath="$0"
+    fi
 
-destination_folder="/usr/share/nautilus-python/extensions"
+declare -r destination_folder="/usr/share/nautilus-python/extensions"
+
+if [[ $(lsb_release -rs | head -c2) -lt 16 ]]; then
+    printf "\033[31;1mOld Ubuntu version (<16.04)...\033[0;0m\n"
+    exit
+    fi
 
 printf "\033[1mInstalling dependencies...\033[0m\n"
-if [[ ( "$1" == 3* ) || (("$1" == "") && ( $(lsb_release -rs | head -c2) -ge 16 )) ]]; then
-	sudo apt-get install python3-mutagen python-pyexiv2 python-kaa-metadata python-pypdf; status=$?
-	proper_ver="source3"
+if [[ ( "$#" -ge 1 ) && ( "$1" =~ ^-?-(python)?3$ ) ]]; then 
+    tryDoing sudo apt -y install python3-pip; status=$?
+    pip='pip3'
 else
-	sudo apt-get install python-mutagen python-pyexiv2 python-kaa-metadata python-pypdf2; status=$?
-	if [[ $status -ne 0 ]]; then
-		sudo apt-get install python3-mutagen python-pyexiv2 python-kaa-metadata python-pypdf; status=$?
-		fi
-	proper_ver="source"
-	fi
-sudo apt-get install python-nautilus; end_status=$?
-end_status=$((status + end_status))
+    tryDoing sudo apt -y install python-pip; status=$?
+    pip='pip'
+    fi
+tryDoing sudo apt -y install python-nautilus
+tryDoing sudo $pip install lxml
+tryDoing sudo $pip install pymediainfo 
+tryDoing sudo $pip install mutagen
+tryDoing sudo $pip install mido
+tryDoing sudo $pip install pillow
+if [[ "$pip" == 'pip3' ]]; then tryDoing sudo $pip install pyexiv2
+else tryDoing sudo apt -y install python-pyexiv2
+tryDoing sudo $pip install pypdf2
+tryDoing sudo $pip install torrentool
 
-if [[ $end_status -eq 0 ]]; then
-	printf "\033[1mCopying the script to the nautilus-python folder...\033[0m\n"
-	printf "<> $proper_ver/metadata-on-nautilus.py\n"
-	sudo mkdir -p "$destination_folder"; status=$?
-	end_status=$((status + end_status))
-	fi
+printf "\033[1mCopying the script to the nautilus-python folder...\033[0m\n"
+tryDoing sudo mkdir -p "$destination_folder"
+tryDoing sudo cp -i "${selfpath%/*}/metanautilus.py" "$destination_folder"
 
-if [[ $end_status -eq 0 ]]; then
-	sudo cp -i "${selfpath%/*}/$proper_ver/metadata-on-nautilus.py" "$destination_folder"; status=$?
-	end_status=$((status + end_status))
-	fi
+printf "\033[1mGiving \033[3mexecute permission\033[0;0m\033[1m to the script...\033[0m\n"
+tryDoing sudo chmod +x "$destination_folder/metanautilus.py"
 
-if [[ $end_status -eq 0 ]]; then
-	printf "\033[1mGiving \033[3mexecute permission\033[0;0m\033[1m to the script...\033[0m\n"
-	sudo chmod +x "$destination_folder/metadata-on-nautilus.py"; status=$?
-	end_status=$((status + end_status))
-	fi
-
-if [[ $end_status -eq 0 ]]; then
-	printf "\n\033[2m[press any key to restart Nautilus]\033[0m "; read -n 1 -s; printf "\n\n"
-	nautilus -q
-	nautilus &> /dev/null &
-	printf "\033[1;32mDONE!\033[0m\n"
-else 
-	printf "\033[1;31mFAILED!\033[0m\n"
-	exit $end_status
-	fi
+printf "\n\033[2m[press any key to restart Nautilus]\033[0m "; read -n 1 -s; printf "\n\n"
+tryDoing sudo rm -fr "$HOME/.cache/metanautilus" &> /dev/null
+tryDoing mkdir "$HOME/.cache/metanautilus"; fi
+nautilus -q
+nautilus &> /dev/null &
+printf "\033[1;32mDONE!\033[0m\n"
 
