@@ -39,7 +39,7 @@ Metanautilus is a python extension for [Nautilus](https://en.wikipedia.org/wiki/
 ### Supported Formats
 
 * __Documents__: 
-  * Document Formats: _HTML__ (.htm, .html, .xhtml); _PDF__ (.pdf); _Office Open XML__ (.docx, .pptx, .xlsx); _Open Document__ (.odt, .ods, .odp, .odg); _Flat XML Open Document__ (.fodt, .fods, .fodp, .fodg); __Markdown__ (.md).
+  * Document Formats: _HTML__ (.htm, .html, .xhtml); _PDF__ (.pdf); _Office Open XML__ (.docx, .pptx, .xlsx); _Open Document__ (.odt, .ods, .odp, .odg); _Flat XML Open Document__ (.fodt, .fods, .fodp, .fodg); __OLE Compound Document__ (.doc, .mpp, .ole, .ppt, .vsd, .xls); _Markdown__ (.md).
 * __Images__:
   * Image Formats: 
   * Format-Agnostic Metadata: 
@@ -55,7 +55,19 @@ Metanautilus is a python extension for [Nautilus](https://en.wikipedia.org/wiki/
   
 ----
 ### Installation
-  
+
+##### Dependencies
+
+__Metanautilus__ depends on the following third-party Python libraries/modules:
+ * python-nautilus _(kinda obvious...)_
+ * lxml
+ * pymediainfo 
+ * mutagen
+ * pillow
+ * pyexiv2
+ * pypdf2
+ * olefile
+ * torrentool
 
 ##### Manual Installation Steps
 
@@ -79,5 +91,5 @@ If you find a bug, please report it at https://github.com/pedrovernetti/metanaut
 ----
 ### License
 
-Metanautilis is distributed under the terms of the GNU General Public License, version 3. See the [LICENSE](/LICENSE) file for details.
+__Metanautilus__ is distributed under the terms of the GNU General Public License, version 3 (__GPL-3.0__). See the [LICENSE](/LICENSE) file for details.
 

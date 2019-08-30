@@ -36,11 +36,11 @@ tryDoing sudo apt -y install python-nautilus
 tryDoing sudo $pip install lxml
 tryDoing sudo $pip install pymediainfo 
 tryDoing sudo $pip install mutagen
-tryDoing sudo $pip install mido
 tryDoing sudo $pip install pillow
 if [[ "$pip" == 'pip3' ]]; then tryDoing sudo $pip install pyexiv2
 else tryDoing sudo apt -y install python-pyexiv2
 tryDoing sudo $pip install pypdf2
+tryDoing sudo $pip install olefile
 tryDoing sudo $pip install torrentool
 
 printf "\033[1mCopying the script to the nautilus-python folder...\033[0m\n"
