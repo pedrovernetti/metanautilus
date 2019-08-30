@@ -3,8 +3,9 @@
 tryDoing()
 {
     if ! $@; then
+        status=$?
         printf "\033[1;31mFAILED!\033[0m\n"
-        exit $end_status
+        exit $status
         fi
 }
 
@@ -17,7 +18,8 @@ else
     declare -r selfpath="$0"
     fi
 
-declare -r destination_folder="/usr/share/nautilus-python/extensions"
+declare -r data_folder="/usr/share/metanautilus"
+declare -r extensions_folder="/usr/share/nautilus-python/extensions"
 
 if [[ $(lsb_release -rs | head -c2) -lt 16 ]]; then
     printf "\033[31;1mOld Ubuntu version (<16.04)...\033[0;0m\n"
@@ -43,12 +45,16 @@ tryDoing sudo $pip install pypdf2
 tryDoing sudo $pip install olefile
 tryDoing sudo $pip install torrentool
 
+printf "\033[1mCopying files to the (just created) data folder...\033[0m\n"
+tryDoing sudo mkdir -p "$data_folder"
+tryDoing sudo cp -i "${selfpath%/*}/suffixToMethod.map" "$data_folder"
+
 printf "\033[1mCopying the script to the nautilus-python folder...\033[0m\n"
-tryDoing sudo mkdir -p "$destination_folder"
-tryDoing sudo cp -i "${selfpath%/*}/metanautilus.py" "$destination_folder"
+tryDoing sudo mkdir -p "$extensions_folder"
+tryDoing sudo cp -i "${selfpath%/*}/metanautilus.py" "$extensions_folder"
 
 printf "\033[1mGiving \033[3mexecute permission\033[0;0m\033[1m to the script...\033[0m\n"
-tryDoing sudo chmod +x "$destination_folder/metanautilus.py"
+tryDoing sudo chmod +x "$extensions_folder/metanautilus.py"
 
 printf "\n\033[2m[press any key to restart Nautilus]\033[0m "; read -n 1 -s; printf "\n\n"
 tryDoing sudo rm -fr "$HOME/.cache/metanautilus" &> /dev/null

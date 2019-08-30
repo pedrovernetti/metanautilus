@@ -21,9 +21,10 @@
 #    binding for Nautilus components) using your package manager;         .
 # 2. with pip, install lxml, pymediainfo, mutagen, mido, pillow, pyexiv2, .
 #    pypdf2, olefile and torrentool;                                      .
-# 3. place this script at the nautilus-python extensions folder (which    .
+# 3. place suffixToMethod.map at '/usr/share/metanautilus/';              .
+# 4. place this script at the nautilus-python extensions folder (which    .
 #    uses to be '/usr/share/nautilus-python/extensions');                 .
-# 4. restart Nautilus (run 'nautilus -q; nautilus').                      .
+# 5. restart Nautilus (run 'nautilus -q; nautilus').                      .
 #
 # =============================================================================================
 
@@ -80,6 +81,7 @@ maxFieldSize = 100
 minFilesToCache = 20
 ignoreNonLocalFiles = False
 maximumNonLocalFileSize = 268435456 # 256MB
+dataFolder = '/usr/share/metanautilus/'
 
 # =============================================================================================
 
@@ -609,27 +611,24 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         
     def _fetchMIDIMetadata( self, metadata, path ):
         with open(path, 'rb') as audio:
-            fileHead = audio.read(512)
+            fileData = audio.read()
             audio.seek(-32, 2)
             fileTail = audio.read(32)[:8]
             fileSize = audio.tell()
-            audio.seek(0)
-            if (fileHead[:3] == b'ID3'): fileSize -= self._fetchID3Metadata(metadata, audio)
-            elif (fileTail == b'APETAGEX'): self._fetchAPEv2Metadata(metadata, audio)
-            else:
-                comments = re.findall('\xFF\x01.*?\x00', fileHead)
-                name = re.findall('\xFF\x03.*?\x00', fileHead)
-                if (len(comments) > 0):
-                    comments = [comment[2:-1].decode('utf-8', errors='ignore') for comment in comments]
-                    metadata.comment = re.sub('[\x00-\x1F]', '', self._formatedStringList(comments))
-                if(len(name) > 0):
-                    metadata.title = name[0][2:-1].decode('utf-8', errors='ignore')
-                    metadata.title = re.sub('[\x00-\x1F]', '', self._formatedString(metadata.title))
+            audio.seek(0)            
             try: MIDIAudio = mutagen.smf.SMF(audio)
             except: return
             metadata.duration = self._formatedDuration(MIDIAudio.info.length + 1)
-            print(path + " :: " + str(fileSize * 8) + " :: " + str(MIDIAudio.info.length + 1))
             metadata.bitrate = str(int((fileSize * 8) / (MIDIAudio.info.length + 1))) + ' bps'
+            comments = re.findall('\xFF\x01.*?\x00', fileData)
+            if (len(comments) > 0):
+                comments = [self._cleanASCII(comment[2:-1]) for comment in comments]
+                metadata.comment = self._formatedStringList(comments)
+            names = re.findall('\xFF\x03.*?\x00', fileData)
+            if(len(names) > 0):
+                names = [self._cleanASCII(name[2:-1]) for name in names]
+                metadata.title = self._formatedStringList(names)
+            if (fileTail == b'APETAGEX'): self._fetchAPEv2Metadata(metadata, audio)
         
     def _fetchMP4Metadata( self, metadata, pathOrFile, fileSize = None ):
         try: av = mutagen.mp4.MP4(pathOrFile)
@@ -729,6 +728,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         except: return
         comment = self._unicode(archive.comment)
         if (len(comment) > 0): metadata.comment = self._formatedString(comment)
+        
+    def _fetchNoMetadataAtAll( self, metadata, path ):
+        pass
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # CALLING THE PROPER FETCHING FUNCTIONS, THEN ASSIGNING THE METADATA TO EACH FILE
@@ -796,7 +798,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             #self._mute() # Muting to hide possible third-party complaints
             mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
             if mappedMethod is not None:
-                (eval(mappedMethod))(metadata, path)
+                mappedMethod(metadata, path)
             elif mime.startswith('ima'):
                 self._fetchImageMetadata(metadata, path, mime)
             elif mime.startswith(('aud', 'vid')):
@@ -939,53 +941,14 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         pickler.daemon = True
         pickler.start()
         
-    def _initializeSuffixToMethodMap( self ):
+    def _loadSuffixToMethodMap( self ):
         self._suffixToMethodMap = dict()
-        self._suffixToMethodMap['desktop'] = 'self._fetchDesktopEntryMetadata'
-        self._suffixToMethodMap['doc'] = 'self._fetchOLECompoundFileMetadata'
-        self._suffixToMethodMap['docx'] = 'self._fetchOfficeOpenXMLMetadata'
-        self._suffixToMethodMap['epub'] = 'self._fetchEPUBMetadata'
-        self._suffixToMethodMap['flac'] = 'self._fetchFLACMetadata'
-        self._suffixToMethodMap['fodg'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['fodp'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['fods'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['fodt'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['hevc'] = 'self._fetchUnspecifiedAVMetadata'
-        self._suffixToMethodMap['html'] = 'self._fetchHTMLMetadata'
-        self._suffixToMethodMap['htm'] = 'self._fetchHTMLMetadata'
-        self._suffixToMethodMap['html'] = 'self._fetchHTMLMetadata'
-        self._suffixToMethodMap['kar'] = 'self._fetchMIDIMetadata'
-        self._suffixToMethodMap['m4a'] = 'self._fetchAVMetadata'
-        self._suffixToMethodMap['m4b'] = 'self._fetchAVMetadata'
-        self._suffixToMethodMap['m4p'] = 'self._fetchAVMetadata'
-        self._suffixToMethodMap['md'] = 'self._fetchMarkdownMetadata'
-        self._suffixToMethodMap['midi'] = 'self._fetchMIDIMetadata'
-        self._suffixToMethodMap['mid'] = 'self._fetchMIDIMetadata'
-        self._suffixToMethodMap['mks'] = 'self._fetchUnspecifiedAVMetadata'
-        self._suffixToMethodMap['mp3'] = 'self._fetchAVMetadata'
-        self._suffixToMethodMap['mpp'] = 'self._fetchOLECompoundFileMetadata'
-        self._suffixToMethodMap['odg'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['odp'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['ods'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['odt'] = 'self._fetchOpenDocumentMetadata'
-        self._suffixToMethodMap['ofg'] = 'self._fetchOptimFROGMetadata'
-        self._suffixToMethodMap['ofr'] = 'self._fetchOptimFROGMetadata'
-        self._suffixToMethodMap['ofs'] = 'self._fetchOptimFROGMetadata'
-        self._suffixToMethodMap['pdf'] = 'self._fetchPDFMetadata'
-        self._suffixToMethodMap['ppt'] = 'self._fetchOLECompoundFileMetadata'
-        self._suffixToMethodMap['pptx'] = 'self._fetchOfficeOpenXMLMetadata'
-        self._suffixToMethodMap['ra'] = 'self._fetchUnspecifiedAVMetadata'
-        self._suffixToMethodMap['ram'] = 'self._fetchUnspecifiedAVMetadata'
-        self._suffixToMethodMap['rm'] = 'self._fetchUnspecifiedAVMetadata'
-        self._suffixToMethodMap['rmvb'] = 'self._fetchUnspecifiedAVMetadata'
-        self._suffixToMethodMap['srt'] = 'self._fetchSubRipMetadata'
-        self._suffixToMethodMap['xhtml'] = 'self._fetchHTMLMetadata'
-        self._suffixToMethodMap['xls'] = 'self._fetchOLECompoundFileMetadata'
-        self._suffixToMethodMap['xlsx'] = 'self._fetchOfficeOpenXMLMetadata'
-        self._suffixToMethodMap['xspf'] = 'self._fetchXSPFMetadata'
-        self._suffixToMethodMap['torrent'] = 'self._fetchTorrentMetadata'
-        self._suffixToMethodMap['vsd'] = 'self._fetchOLECompoundFileMetadata'
-        self._suffixToMethodMap['zip'] = 'self._fetchZIPMetadata'
+        try: mapFile = open((dataFolder + 'suffixToMethod.map'), 'r')
+        except: return
+        for line in mapFile:
+            if (len(line) < 8): continue
+            suffixAndMethod = line.split(' ')
+            self._suffixToMethodMap[suffixAndMethod[0]] = eval('self.' + suffixAndMethod[-1])
 
     def __init__( self ):
         self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
@@ -993,7 +956,12 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
         self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
         self._initializeCache()
-        self._initializeSuffixToMethodMap()
+        self._loadSuffixToMethodMap()
+
+# =============================================================================================
+
+if __name__ == '__main__':
+    pass #TODO
 
 # =============================================================================================
 
