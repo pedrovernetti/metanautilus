@@ -163,7 +163,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if not os.path.exists(cacheFile) or os.path.isfile(cacheFile):
             with open(cacheFile, 'wb') as cacheHandle:
                 try: dump(self._knownFiles, cacheHandle, protocol=HIGHEST_PROTOCOL)
-                except PickleError: self._logMessage("Failed to pickle known metadata...")
+                except PickleError: self._logMessage("Failed to pickle known metadata...", True)
         self._unpickledKnownFiles = 0
         self._knownMetadataMutex.release()
 
@@ -173,7 +173,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if not os.path.exists(junkCacheFile) or os.path.isfile(junkCacheFile):
             with open(junkCacheFile, 'wb') as cacheHandle:
                 try: dump(self._knownJunk, cacheHandle, protocol=HIGHEST_PROTOCOL)
-                except PickleError: self._logMessage("Failed to pickle known junk list...")
+                except PickleError: self._logMessage("Failed to pickle known junk list...", True)
         self._unpickledKnownFiles = 0
         self._knownJunkMutex.release()
 
@@ -830,7 +830,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             #elif (scheme == 'archive'): # Doesn't work as the other cases
             #    uri = 'archive:host=' + uri[2] + '/' + unquote('/'.join(uri[3:]))
             #    return (self._gvfsMountpointsDir + uri)
-        self._logMessage("Unable to handle " + scheme + ":// URIs", isWarning=True)
+        self._logMessage("Unable to handle " + scheme + ":// URIs", True)
         return ''
 
     def update_file_info( self, file ):
@@ -909,7 +909,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 if (e.errno == errno.EEXIST) and os.path.isdir(path):
                     pass
                 else:
-                    self._logMessage("Failed to create cache folder", isWarning=True)
+                    self._logMessage("Failed to create cache folder", True)
                     return
         if (os.path.exists(cacheFile) and os.path.isfile(cacheFile)):
             try:
@@ -943,12 +943,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         
     def _loadSuffixToMethodMap( self ):
         self._suffixToMethodMap = dict()
-        try: mapFile = open((dataFolder + 'suffixToMethod.map'), 'r')
-        except: return
-        for line in mapFile:
-            if (len(line) < 8): continue
-            suffixAndMethod = line.split(' ')
-            self._suffixToMethodMap[suffixAndMethod[0]] = eval('self.' + suffixAndMethod[-1])
+        try: 
+            mapFile = open((dataFolder + 'suffixToMethod.map'), 'r')
+        except:
+            self._logMessage("Could not load suffix-to-method mapping...", True)
+            return
+        else:
+            for line in mapFile:
+                if (len(line) < 8): continue
+                suffixAndMethod = line.split(' ')
+                self._suffixToMethodMap[suffixAndMethod[0]] = eval('self.' + suffixAndMethod[-1])
+            mapFile.close()
 
     def __init__( self ):
         self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
