@@ -107,23 +107,23 @@ class fileMetadata():
 
     def nonBlankFields( self ):
         nonBlankCount = 0
-        if self.album != placeholder: nonBlankCount += 1
-        if self.artist != placeholder: nonBlankCount += 1
-        if self.author != placeholder: nonBlankCount += 1
-        if self.bitrate != placeholder: nonBlankCount += 1
-        if self.camera != placeholder: nonBlankCount += 1
-        if self.comment != placeholder: nonBlankCount += 1
-        if self.date != placeholder: nonBlankCount += 1
-        if self.duration != placeholder: nonBlankCount += 1
-        if self.genre != placeholder: nonBlankCount += 1
-        if self.height != placeholder: nonBlankCount += 1
-        if self.pages != placeholder: nonBlankCount += 1
-        if self.samplerate != placeholder: nonBlankCount += 1
-        if self.title != placeholder: nonBlankCount += 1
-        if self.tracknumber != placeholder: nonBlankCount += 1
-        if self.width != placeholder: nonBlankCount += 1
-        if self.year != placeholder: nonBlankCount += 1
-        if self.exif_flash != placeholder: nonBlankCount += 1
+        if (self.album != placeholder): nonBlankCount += 1
+        if (self.artist != placeholder): nonBlankCount += 1
+        if (self.author != placeholder): nonBlankCount += 1
+        if (self.bitrate != placeholder): nonBlankCount += 1
+        if (self.camera != placeholder): nonBlankCount += 1
+        if (self.comment != placeholder): nonBlankCount += 1
+        if (self.date != placeholder): nonBlankCount += 1
+        if (self.duration != placeholder): nonBlankCount += 1
+        if (self.genre != placeholder): nonBlankCount += 1
+        if (self.height != placeholder): nonBlankCount += 1
+        if (self.pages != placeholder): nonBlankCount += 1
+        if (self.samplerate != placeholder): nonBlankCount += 1
+        if (self.title != placeholder): nonBlankCount += 1
+        if (self.tracknumber != placeholder): nonBlankCount += 1
+        if (self.width != placeholder): nonBlankCount += 1
+        if (self.year != placeholder): nonBlankCount += 1
+        if (self.exif_flash != placeholder): nonBlankCount += 1
         return nonBlankCount
 
 # =============================================================================================
@@ -151,7 +151,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             sys.stdout.write("Metanautilus: ")
         now = datetime.now()
         prettyTime = ("{:%H:%M:%S.}".format(now) + str(now.microsecond * 1000))[:12]
-        sys.stdout.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
+        sys.__stdout__.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # MANAGING AND USING THE CACHES
@@ -160,7 +160,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _pickleKnownMetadata( self, cacheFile ):
         self._logMessage("Pickling currently known metadata...")
         self._knownMetadataMutex.acquire()
-        if not os.path.exists(cacheFile) or os.path.isfile(cacheFile):
+        if ((not os.path.exists(cacheFile)) or os.path.isfile(cacheFile)):
             with open(cacheFile, 'wb') as cacheHandle:
                 try: dump(self._knownFiles, cacheHandle, protocol=HIGHEST_PROTOCOL)
                 except PickleError: self._logMessage("Failed to pickle known metadata...", True)
@@ -170,7 +170,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _pickleKnownJunk( self, junkCacheFile ):
         self._logMessage("Pickling list of currently known junk...")
         self._knownJunkMutex.acquire()
-        if not os.path.exists(junkCacheFile) or os.path.isfile(junkCacheFile):
+        if ((not os.path.exists(junkCacheFile)) or os.path.isfile(junkCacheFile)):
             with open(junkCacheFile, 'wb') as cacheHandle:
                 try: dump(self._knownJunk, cacheHandle, protocol=HIGHEST_PROTOCOL)
                 except PickleError: self._logMessage("Failed to pickle known junk list...", True)
@@ -249,7 +249,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         try: parsedXML = etree.parse(file, etree.XMLParser(remove_blank_text=True, remove_comments=True))
         except: return None
         for element in parsedXML.getroot().getiterator():
-            if not hasattr(element.tag, 'find'): continue
+            if (not hasattr(element.tag, 'find')): continue
             position = element.tag.find('}')
             if (position >= 0): element.tag = element.tag[(position + 1):]      
         return parsedXML
@@ -328,8 +328,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         for c in trackNumberString:
             if (c > '9') or (c < '0'): break
             pos += 1
-        if pos == 0: return placeholder
-        elif pos == 1: return '0' + trackNumberString[0]
+        if (pos == 0): return placeholder
+        elif (pos == 1): return '0' + trackNumberString[0]
         return trackNumberString[:pos]
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
@@ -358,27 +358,27 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         try: xml = html.parse(path)
         except: return
         title = xml.find('.//title')
-        if title is None:
+        if (title is None):
             title = xml.find('.//meta[@name="title"]')
-            if title is None: title = xml.find('.//meta[@property="og:title"]')
-            if title is None: title = xml.find('.//meta[@name="parsely-title"]')
-            if title is None: title = xml.find('.//name')
-        if title is not None: metadata.title = self._formatedString(title.text)
+            if (title is None): title = xml.find('.//meta[@property="og:title"]')
+            if (title is None): title = xml.find('.//meta[@name="parsely-title"]')
+            if (title is None): title = xml.find('.//name')
+        if (title is not None): metadata.title = self._formatedString(title.text)
         author = xml.find('.//meta[@name="author"]')
-        if author is None: author = xml.find('.//meta[@property="og:author"]')
-        if author is None: author = xml.find('.//meta[@name="parsely-author"]')
-        if author is not None: metadata.author = author.get('content')
+        if (author is None): author = xml.find('.//meta[@property="og:author"]')
+        if (author is None): author = xml.find('.//meta[@name="parsely-author"]')
+        if (author is not None): metadata.author = author.get('content')
         comment = xml.find('.//meta[@name="description"]')
-        if comment is None:
-            if comment is None: comment = xml.find('.//meta[@property="og:description"]')
-            if comment is None: comment = xml.find('.//meta[@name="comment"]')
-            if comment is None: comment = xml.find('.//meta[@name="parselycomment"]')
-        if comment is not None: metadata.comment = self._formatedHTMLPiece(comment.get('content'))
+        if (comment is None):
+            if (comment is None): comment = xml.find('.//meta[@property="og:description"]')
+            if (comment is None): comment = xml.find('.//meta[@name="comment"]')
+            if (comment is None): comment = xml.find('.//meta[@name="parselycomment"]')
+        if (comment is not None): metadata.comment = self._formatedHTMLPiece(comment.get('content'))
         
     def _fetchMarkdownMetadata( self, metadata, path ):
         try: document = open(path, 'r')
         except: return
-        title = [line for line in document if re.match(r'^[\t ]*# .*$', line)]
+        title = [line for line in document if (re.match(r'^[\t ]*# .*$', line))]
         if (len(title) > 0): 
             metadata.title = re.sub(r'^[\t ]*# ', '', title[0]).strip()
             
@@ -461,22 +461,22 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _fetchPDFMetadata( self, metadata, path ):
         try: document = PDFFile(path, strict=False)
         except: return
-        if document.isEncrypted: return
+        if (document.isEncrypted): return
         metadata.pages = str(document.numPages)
         info = document.documentInfo
         author = info.get('/Author')
-        if isinstance(author, PDFIndirectObject): author = document.getObject(author)
+        if (isinstance(author, PDFIndirectObject)): author = document.getObject(author)
         metadata.author = self._formatedString(author) if (author is not None) else placeholder
         #company = info.get('/EBX_PUBLISHER', placeholder)
-        #if isinstance(company, PDFIndirectObject): company = document.getObject(company)
+        #if (isinstance(company, PDFIndirectObject)): company = document.getObject(company)
         #metadata.company = self._formatedString(company) if (company is not None) else placeholder
         date = info.get('/CreationDate')
-        if isinstance(date, PDFIndirectObject): date = document.getObject(date)
+        if (isinstance(date, PDFIndirectObject)): date = document.getObject(date)
         if (date is not None):
             metadata.date = self._formatedDate(date)
             metadata.year = metadata.date[:4]
         title = info.get('/Title', placeholder)
-        if isinstance(title, PDFIndirectObject): title = document.getObject(title)
+        if (isinstance(title, PDFIndirectObject)): title = document.getObject(title)
         metadata.title = self._formatedString(title) if (title is not None) else placeholder
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
@@ -514,10 +514,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.album = self._formatedString(audio.get('Album', [placeholder])[0])
         metadata.artist = self._formatedStringList(audio.get('Artist', [placeholder]))
         author = audio.get('Composer')
-        if author is None:
+        if (author is None):
             author = audio.get('Lyricist')
-            if author is None: author = audio.get('Writer')
-        if author is not None: metadata.author = self._formatedStringList(author)
+            if (author is None): author = audio.get('Writer')
+        if (author is not None): metadata.author = self._formatedStringList(author)
         metadata.comment = self._formatedStringList(audio.get('Comment', [placeholder]))
         #metadata.company = self._formatedString(audio.get('Label', [placeholder]))
         metadata.genre = self._formatedStringList(audio.get('Genre', [placeholder]))
@@ -533,17 +533,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.album = self._formatedString(audio.get('TALB', [placeholder])[0])
         metadata.artist = self._formatedStringList(audio.get('TPE1', [placeholder]))
         author = audio.get('TCOM')
-        if author is None: author = audio.get('TEXT')
-        if author is not None: metadata.author = self._formatedStringList(author)
-        comments = []
-        for COMMFrame in audio.getall('COMM'):
-            if COMMFrame.desc == u'': comments.append(COMMFrame)
-        metadata.comment = self._formatedStringList(comments)
+        if (author is None): author = audio.get('TEXT')
+        if (author is not None): metadata.author = self._formatedStringList(author)
+        comments = [comment for comment in audio.getall('COMM') if (comment.desc == u'')]
+        if (len(comments) > 0):
+            comments = [self._unicode(comment, comment.encoding) for comment in comments]
+            metadata.comment = self._formatedStringList(comments)
         metadata.genre = self._formatedStringList(audio.get('TCON', [placeholder]))
         metadata.title = self._formatedString(audio.get('TIT2', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('TRCK', [placeholder])[0])
         date = audio.get('TDRC')
-        if date is not None: date = date[0].get_text()[:10]
+        if (date is not None): date = date[0].get_text()[:10]
         else: date = audio.get('TYER', [placeholder])[0][:10]
         metadata.date = self._formatedDate(date)
         metadata.year = date[:4]
@@ -552,39 +552,39 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         try: av = MediaInfo.parse(path)
         except: return
         general = av.tracks[0]
-        if general.overall_bit_rate is not None: 
+        if (general.overall_bit_rate is not None): 
             metadata.bitrate = general.overall_bit_rate
             if (metadata.bitrate > 1024): metadata.bitrate = str(int(metadata.bitrate // 1000))
             else: metadata.bitrate = str(int(metadata.bitrate)) + ' bps'
-        if general.duration is not None: metadata.duration = self._formatedDuration(general.duration // 1000)
-        elif general.other_duration is not None: metadata.duration = general.other_duration[3][:8]
+        if (general.duration is not None): metadata.duration = self._formatedDuration(general.duration // 1000)
+        elif (general.other_duration is not None): metadata.duration = general.other_duration[3][:8]
         for track in av.tracks:
-            if track.track_type[0] == 'V':
-                if track.width is not None: metadata.width = str(track.width)
-                if track.height is not None: metadata.height = str(track.height)
-            elif track.track_type[0] == 'A':
-                if track.sampling_rate is not None: metadata.samplerate = str(track.sampling_rate)
-            elif track.track_type[0] != 'G': break
+            if (track.track_type[0] == 'V'):
+                if (track.width is not None): metadata.width = str(track.width)
+                if (track.height is not None): metadata.height = str(track.height)
+            elif (track.track_type[0] == 'A'):
+                if (track.sampling_rate is not None): metadata.samplerate = str(track.sampling_rate)
+            elif (track.track_type[0] != 'G'): break
         if (not complete): return
-        if general.album is not None: metadata.album = self._formatedString(general.album)
-        if general.performer is not None: metadata.artist = self._formatedString(general.performer)
-        if general.director is not None: metadata.author = self._formatedString(general.director)
-        elif general.composer is not None: metadata.author = self._formatedString(general.composer)
-        elif general.lyricist is not None: metadata.author = self._formatedString(general.lyricist)
-        elif general.writer is not None: metadata.author = self._formatedString(general.writer)
-        elif general.writer is not None: metadata.author = self._formatedString(general.author)
-        if general.comment is not None: metadata.comment = self._formatedString(general.comment)
-        #if general.publisher is not None: metadata.company = self._formatedString(general.publisher)
-        if general.genre is not None: metadata.genre = self._formatedString(general.genre)
-        if general.movie_name is not None: metadata.title = self._formatedString(general.movie_name)
-        elif general.track_name is not None: metadata.title = self._formatedString(general.track_name)
-        elif general.title is not None: metadata.title = self._formatedString(general.title)
-        if general.released_date is not None: date = self._formatedString(general.released_date)
-        elif general.recorded_date is not None: date = self._formatedString(general.recorded_date)
+        if (general.album is not None): metadata.album = self._formatedString(general.album)
+        if (general.performer is not None): metadata.artist = self._formatedString(general.performer)
+        if (general.director is not None): metadata.author = self._formatedString(general.director)
+        elif (general.composer is not None): metadata.author = self._formatedString(general.composer)
+        elif (general.lyricist is not None): metadata.author = self._formatedString(general.lyricist)
+        elif (general.writer is not None): metadata.author = self._formatedString(general.writer)
+        elif (general.writer is not None): metadata.author = self._formatedString(general.author)
+        if (general.comment is not None): metadata.comment = self._formatedString(general.comment)
+        #if (general.publisher is not None): metadata.company = self._formatedString(general.publisher)
+        if (general.genre is not None): metadata.genre = self._formatedString(general.genre)
+        if (general.movie_name is not None): metadata.title = self._formatedString(general.movie_name)
+        elif (general.track_name is not None): metadata.title = self._formatedString(general.track_name)
+        elif (general.title is not None): metadata.title = self._formatedString(general.title)
+        if (general.released_date is not None): date = self._formatedString(general.released_date)
+        elif (general.recorded_date is not None): date = self._formatedString(general.recorded_date)
         else: date = placeholder
         metadata.date = self._formatedDate(general.released_date)
         metadata.year = metadata.date[:4]
-        if general.track_name_position is not None:
+        if (general.track_name_position is not None):
             metadata.tracknumber = self._formatedTrackNumber(general.track_name_position)
             
     def _fetchFLACMetadata( self, metadata, pathOrFile ):
@@ -593,10 +593,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.album = audio.get('ALBUM', [placeholder])[0]
         metadata.artist = self._formatedStringList(audio.get('ARTIST', [placeholder]))
         author = audio.get('COMPOSER')
-        if author is None:
+        if (author is None):
             author = audio.get('LYRICIST')
-            if author is None: author = audio.get('WRITER')
-        if author is not None: metadata.author = self._formatedStringList(author)
+            if (author is None): author = audio.get('WRITER')
+        if (author is not None): metadata.author = self._formatedStringList(author)
         metadata.bitrate = str(audio.info.bitrate // 1000)
         metadata.comment = self._formatedStringList(audio.get('COMMENT', [placeholder]))
         #metadata.company = self._formatedString(audio.get('LABEL', [placeholder]))
@@ -665,7 +665,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 self._fetchFLACMetadata(metadata, avfile)
             elif (fileSignature[-6:] == b'ftypM4'): 
                 self._fetchMP4Metadata(metadata, avfile)
-            elif fileSignature.startswith(b'OFR'): 
+            elif (fileSignature.startswith(b'OFR')): 
                 self._fetchOptimFROGMetadata(metadata, avfile)
             elif (fileSignature[:3] == b'ID3'): 
                 self._fetchID3Metadata(metadata, avfile)
@@ -716,12 +716,12 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _fetchTorrentMetadata( self, metadata, path ):
         try: torrent = Torrent.from_file(path)
         except: return
-        if torrent.created_by is not None: metadata.author = torrent.created_by
-        if torrent.creation_date is not None:
+        if (torrent.created_by is not None): metadata.author = torrent.created_by
+        if (torrent.creation_date is not None):
             metadata.date = torrent.creation_date.isoformat()[:10]
             metadata.year = metadata.date[:4]
-        if torrent.comment is not None: metadata.comment = self._formatedString(torrent.comment)
-        if torrent.name is not None: metadata.title = torrent.name
+        if (torrent.comment is not None): metadata.comment = self._formatedString(torrent.comment)
+        if (torrent.name is not None): metadata.title = torrent.name
         
     def _fetchZIPMetadata( self, metadata, path ):
         try: archive = ZIPFile(path, 'r')
@@ -797,17 +797,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             mime = file.get_mime_type()
             #self._mute() # Muting to hide possible third-party complaints
             mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
-            if mappedMethod is not None:
+            if (mappedMethod is not None):
                 mappedMethod(metadata, path)
-            elif mime.startswith('ima'):
+            elif (mime.startswith('ima')):
                 self._fetchImageMetadata(metadata, path, mime)
-            elif mime.startswith(('aud', 'vid')):
+            elif (mime.startswith(('aud', 'vid'))):
                 self._fetchAVMetadata(metadata, path)
-            elif mime.startswith('app'):
+            elif (mime.startswith('app')):
                 mime = mime[12:]
-                if mime.endswith('pdf'): self._fetchPDFMetadata(metadata, path)
-                elif mime.startswith('epub'): self._fetchEPUBMetadata(metadata, path)
-                elif mime.endswith('torrent'): self._fetchTorrentMetadata(metadata, path)
+                if (mime.endswith('pdf')): self._fetchPDFMetadata(metadata, path)
+                elif (mime.startswith('epub')): self._fetchEPUBMetadata(metadata, path)
+                elif (mime.endswith('torrent')): self._fetchTorrentMetadata(metadata, path)
             self._unmute()
             self._assignMetadataToFile(metadata, file)
             if (isLocal): self._remember(metadata, status)
@@ -827,9 +827,6 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 uri = uri[2] + ',share=' + unquote(uri[3]) + '/' + unquote('/'.join(uri[4:]))
                 uri = 'smb-share:server=' + uri
                 return (self._gvfsMountpointsDir + uri)
-            #elif (scheme == 'archive'): # Doesn't work as the other cases
-            #    uri = 'archive:host=' + uri[2] + '/' + unquote('/'.join(uri[3:]))
-            #    return (self._gvfsMountpointsDir + uri)
         self._logMessage("Unable to handle " + scheme + ":// URIs", True)
         return ''
 
@@ -965,7 +962,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
 
 # =============================================================================================
 
-if __name__ == '__main__':
+if (__name__ == '__main__'):
     pass #TODO
 
 # =============================================================================================
