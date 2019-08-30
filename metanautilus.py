@@ -1,16 +1,30 @@
-#!/usr/bin/python3
+#!/usr/bin/python
 
 # =============================================================================================
-
-# In order to have this script working (if it is currently not),
-# run 'install.sh -3' (should come with this script)
-
-# IF YOU WILL BE RUNNING THIS NOT ON UBUNTU...
-# #1 Install Mutagen, pyexiv2, Kaa Metadata and pypdf (Python 3 modules)
-# #2 Install python-nautilus via your package manager
-# #3 Check where python-nautilus extension must be placed in your system
-#     and place a copy of this python script there with execute permission
-
+#
+# This program is free software: you can redistribute it and/or modify it under the terms of
+# the GNU General Public License as published by the Free Software Foundation, either version
+# 3 of the License, or (at your option) any later version.
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+# This script must/should come together with a copy of the GNU General Public License. If not,
+# access <http://www.gnu.org/licenses/> to find and read it.
+#
+# Author: Pedro Vernetti G.
+# Name: Metanautilus
+# Description: Nautilus extension which adds support to multiple details/metadata from files.
+#
+# #  In order to have this script working (if it is currently not), run 'install.sh'. In case
+#    it is missing or does not work, follow these steps:
+# 1. install pip (Python package installer) and python-nautilus (Python   .
+#    binding for Nautilus components) using your package manager;         .
+# 2. with pip, install lxml, pymediainfo, mutagen, mido, pillow, pyexiv2, .
+#    pypdf2, olefile and torrentool;                                      .
+# 3. place this script at the nautilus-python extensions folder (which    .
+#    uses to be '/usr/share/nautilus-python/extensions');                 .
+# 4. restart Nautilus (run 'nautilus -q; nautilus').                      .
+#
 # =============================================================================================
 
 # Basic stuff
@@ -19,7 +33,8 @@ pythonIs2OrOlder = (sys.version_info.major <= 2)
 from threading import Thread, activeCount, Lock
 from datetime import datetime
 from time import sleep
-from urllib import unquote
+try: from urllib import unquote
+except: from urllib import parse as unquote
 from pickle import dump, load, PickleError, HIGHEST_PROTOCOL
 if (pythonIs2OrOlder): import Queue as queue
 else: import queue as queue
@@ -42,11 +57,12 @@ from zipfile import ZipFile as ZIPFile
 import re
 from PyPDF2 import PdfFileReader as PDFFile
 from PyPDF2.generic import IndirectObject as PDFIndirectObject
+try: from olefile import OleFileIO as OLEFile
+except: from OleFileIO_PL import OleFileIO as OLEFile
 
 # Tools to fetch metadata from audio/video
 from pymediainfo import MediaInfo
-import mutagen.id3, mutagen.apev2
-import mutagen.aac, mutagen.flac, mutagen.mp4, mutagen.optimfrog, mutagen.smf
+import mutagen.id3, mutagen.apev2, mutagen.aac, mutagen.flac, mutagen.mp4, mutagen.optimfrog, mutagen.smf
 
 import mutagen.dsf, mutagen.trueaudio
 
@@ -60,7 +76,7 @@ from torrentool.api import Torrent
 # =============================================================================================
 
 placeholder = u"\u2014" # "Em Dash"
-maxFieldSize = 96
+maxFieldSize = 100
 minFilesToCache = 20
 ignoreNonLocalFiles = False
 maximumNonLocalFileSize = 268435456 # 256MB
@@ -200,6 +216,43 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             self._knownMetadataMutex.release()
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    # PERFORMING SOME SUBTASKS
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    
+    def _cleanASCII( self, someString ):
+        return (re.sub(r'[\x00-\x1F\x7F-\xFF]', '', someString))
+    
+    def _unicode( self, something, encoding = 'utf_8', ignoreErrors = False ):
+        result = u''
+        errorsMode = ('ignore' if (ignoreErrors) else 'replace')
+        if (pythonIs2OrOlder): 
+            if (isinstance(something, unicode)): return something
+            try: result = unicode(something, encoding)
+            except TypeError:
+                try: result = str(something)
+                except: pass
+            except UnicodeError: result = something.decode('ascii', errorsMode)
+            except: pass
+        else:
+            try: result = str(something, encoding)
+            except UnicodeError: result = something.decode('ascii', errorsMode)
+            except: pass
+        return result
+    
+    def _parsedDuration( self, durationString ):
+        durationParts = durationString.split(':')
+        return ((int(durationParts[0]) * 2400) + (int(durationParts[1]) * 60) + int(durationParts[2]))
+    
+    def _parsedXML( self, file ):
+        try: parsedXML = etree.parse(file, etree.XMLParser(remove_blank_text=True, remove_comments=True))
+        except: return None
+        for element in parsedXML.getroot().getiterator():
+            if not hasattr(element.tag, 'find'): continue
+            position = element.tag.find('}')
+            if (position >= 0): element.tag = element.tag[(position + 1):]      
+        return parsedXML
+
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FORMATTING METADATA
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     
@@ -218,8 +271,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
 
     def _formatedDate( self, dateString ):
         if (dateString is None): return placeholder
+        dateString = self._unicode(dateString, 'ascii', True)
         finalString = ''
-        for c in unicode(dateString):
+        for c in dateString:
             if ((c <= '9') and (c >= '0')): finalString += c
             elif (c == '/'): return self._reformatedDate(dateString)
         size = len(finalString)
@@ -229,14 +283,15 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else: return placeholder
 
     def _formatedDuration( self, secs ):
-        return '%02i:%02i:%02i' % ((int(secs/3600)), (int(secs/60%60)), (int(secs%60)))
+        return '%02i:%02i:%02i' % (int(secs // 3600), int((secs // 60) % 60), int(secs % 60))
         
-    def _formatedHTMLPiece( self, htmlString ):
+    def _formatedHTMLPiece( self, htmlString, encoding = 'utf_8' ):
         if (htmlString is None): return placeholder
-        finalString = html.document_fromstring(unicode(htmlString)).text_content().replace('\n', ' ')
+        finalString = self._unicode(htmlString, encoding)
+        finalString = html.document_fromstring(finalString).text_content().replace('\n', ' ')
         if (len(finalString) < 1): return placeholder
         finalString = finalString.strip()
-        if (len(finalString) <= maxFieldSize): return unicode(finalString)
+        if (len(finalString) <= maxFieldSize): return finalString
         else: return (finalString[:(maxFieldSize - 3)] + ' [...]')
 
     def _formatedNumber( self, numberString ):
@@ -245,21 +300,21 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (c <= '9') and (c >= '0'): finalString += c
         return finalString
 
-    def _formatedString( self, anyString ):
+    def _formatedString( self, anyString, encoding = 'utf_8' ):
         if (anyString is None): return placeholder
-        anyString = unicode(anyString)
+        anyString = self._unicode(anyString, encoding)
         if (len(anyString) < 1): return placeholder
-        anyString = anyString.replace('\x00', '').replace('\n', ' ').strip()
+        anyString = anyString.replace('\x00', '').replace('\n', ' ').replace('\r', ' ').strip()
         if (len(anyString) > maxFieldSize): anyString = anyString[:(maxFieldSize - 3)] + ' [...]'
         return anyString
 
-    def _formatedStringList( self, stringList ):
+    def _formatedStringList( self, stringList, encoding = 'utf_8' ):
         if (not isinstance(stringList, list)): stringList = [stringList]
         if (len(stringList) == 1): return self._formatedString(stringList[0])
         elif (len(stringList) == 0): return placeholder
         finalString = u''
         for item in stringList: 
-            item = unicode(item).replace('\n', ' ').strip()
+            item = self._unicode(item).replace('\n', ' ').replace('\r', ' ').strip()
             if (len(item) <= 1): continue
             if ((len(finalString) + len(item)) > maxFieldSize): 
                 return ((finalString + '...') if (len(finalString) > 0) else self._formatedString(item))
@@ -274,23 +329,6 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if pos == 0: return placeholder
         elif pos == 1: return '0' + trackNumberString[0]
         return trackNumberString[:pos]
-
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    # PERFORMING SOME SUBTASKS
-    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    
-    def _parsedDuration( self, durationString ):
-        durationString = durationString.split(':')
-        return ((int(durationString[0]) * 2400) + (int(durationString[1]) * 60) + int(durationString[2]))
-    
-    def _parsedXML( self, file ):
-        try: parsedXML = etree.parse(file, etree.XMLParser(remove_blank_text=True, remove_comments=True))
-        except: return None
-        for element in parsedXML.getroot().getiterator():
-            if not hasattr(element.tag, 'find'): continue
-            position = element.tag.find('}')
-            if (position >= 0): element.tag = element.tag[(position + 1):]      
-        return parsedXML
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FETCHING METADATA FROM DOCUMENTS
@@ -323,15 +361,16 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if title is None: title = xml.find('.//meta[@property="og:title"]')
             if title is None: title = xml.find('.//meta[@name="parsely-title"]')
             if title is None: title = xml.find('.//name')
-        if title is not None: metadata.title = title.text
+        if title is not None: metadata.title = self._formatedString(title.text)
         author = xml.find('.//meta[@name="author"]')
         if author is None: author = xml.find('.//meta[@property="og:author"]')
         if author is None: author = xml.find('.//meta[@name="parsely-author"]')
         if author is not None: metadata.author = author.get('content')
         comment = xml.find('.//meta[@name="description"]')
-        if comment is None: comment = xml.find('.//meta[@property="og:description"]')
-        if comment is None: comment = xml.find('.//meta[@name="comment"]')
-        if comment is None: comment = xml.find('.//meta[@name="parselycomment"]')
+        if comment is None:
+            if comment is None: comment = xml.find('.//meta[@property="og:description"]')
+            if comment is None: comment = xml.find('.//meta[@name="comment"]')
+            if comment is None: comment = xml.find('.//meta[@name="parselycomment"]')
         if comment is not None: metadata.comment = self._formatedHTMLPiece(comment.get('content'))
         
     def _fetchMarkdownMetadata( self, metadata, path ):
@@ -365,6 +404,32 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
             field = parsedXML.find('//title')
             if (field is not None): metadata.title = self._formatedString(field.text)
+            
+    def _fetchOLECompoundFileMetadata( self, metadata, path ):
+        try: 
+            document = OLEFile(path)
+            documentMetadata = document.get_metadata()
+            document.close()
+        except: 
+            return
+        encoding = documentMetadata.codepage if (documentMetadata.codepage > 0) else 1252
+        encoding = 'cp' + str(encoding)
+        if ((documentMetadata.author is not None) and (len(documentMetadata.author) > 1)):
+            metadata.author = self._formatedString(documentMetadata.author, encoding)
+        if (documentMetadata.comments is not None):
+            metadata.comment = self._formatedStringList(documentMetadata.comments, encoding)
+        #if (documentMetadata.company is not None):
+        #    metadata.company = self._formatedStringList(documentMetadata.company, encoding)
+        if (documentMetadata.create_time is not None):
+            metadata.date = documentMetadata.create_time.strftime('%Y-%m-%d')
+        if (documentMetadata.category is not None):
+            metadata.genre = self._formatedStringList(documentMetadata.category, encoding)
+        if (documentMetadata.num_pages is not None):
+            metadata.pages = str(documentMetadata.num_pages)
+        elif (documentMetadata.slides is not None):
+            metadata.pages = str(documentMetadata.slides)
+        if ((documentMetadata.title is not None) and (len(documentMetadata.title) > 1)):
+            metadata.title = self._formatedString(documentMetadata.title, encoding)
 
     def _fetchOpenDocumentMetadata( self, metadata, path ):
         with open(path, 'rb') as document:
@@ -424,7 +489,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 metadata.date = self._formatedDate(image['Exif.Photo.DateTimeOriginal'].raw_value)
                 metadata.year = metadata.date[:4]
             except: pass
-            try: metadata.camera = unicode(image['Exif.Image.Model'].raw_value)
+            try: metadata.camera = self._formatedString(image['Exif.Image.Model'].raw_value)
             except: pass
             try: metadata.exif_flash = str(image['Exif.Photo.Flash'].raw_value)
             except: pass
@@ -444,7 +509,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _fetchAPEv2Metadata( self, metadata, pathOrFile ):
         try: audio = mutagen.apev2.APEv2(pathOrFile)
         except: return
-        metadata.album = audio.get('Album', [placeholder])[0]
+        metadata.album = self._formatedString(audio.get('Album', [placeholder])[0])
         metadata.artist = self._formatedStringList(audio.get('Artist', [placeholder]))
         author = audio.get('Composer')
         if author is None:
@@ -452,8 +517,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if author is None: author = audio.get('Writer')
         if author is not None: metadata.author = self._formatedStringList(author)
         metadata.comment = self._formatedStringList(audio.get('Comment', [placeholder]))
+        #metadata.company = self._formatedString(audio.get('Label', [placeholder]))
         metadata.genre = self._formatedStringList(audio.get('Genre', [placeholder]))
-        metadata.title = audio.get('Title', [placeholder])[0]
+        metadata.title = self._formatedString(audio.get('Title', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('Track', [placeholder])[0])
         date = audio.get('Year', [placeholder])[0][:10]
         metadata.date = self._formatedDate(date)
@@ -462,7 +528,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _fetchID3Metadata( self, metadata, pathOrFile ):
         try: audio = mutagen.id3.ID3(pathOrFile)
         except: return
-        metadata.album = audio.get('TALB', [placeholder])[0]
+        metadata.album = self._formatedString(audio.get('TALB', [placeholder])[0])
         metadata.artist = self._formatedStringList(audio.get('TPE1', [placeholder]))
         author = audio.get('TCOM')
         if author is None: author = audio.get('TEXT')
@@ -472,15 +538,13 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if COMMFrame.desc == u'': comments.append(COMMFrame)
         metadata.comment = self._formatedStringList(comments)
         metadata.genre = self._formatedStringList(audio.get('TCON', [placeholder]))
-        metadata.title = audio.get('TIT2', [placeholder])[0]
+        metadata.title = self._formatedString(audio.get('TIT2', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('TRCK', [placeholder])[0])
         date = audio.get('TDRC')
         if date is not None: date = date[0].get_text()[:10]
         else: date = audio.get('TYER', [placeholder])[0][:10]
         metadata.date = self._formatedDate(date)
         metadata.year = date[:4]
-        path = pathOrFile 
-        return audio.size # ID3 chunk size
 
     def _fetchUnspecifiedAVMetadata( self, metadata, path, complete=True ):
         try: av = MediaInfo.parse(path)
@@ -488,9 +552,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         general = av.tracks[0]
         if general.overall_bit_rate is not None: 
             metadata.bitrate = general.overall_bit_rate
-            if (metadata.bitrate > 1024): metadata.bitrate = str(int(metadata.bitrate / 1000))
+            if (metadata.bitrate > 1024): metadata.bitrate = str(int(metadata.bitrate // 1000))
             else: metadata.bitrate = str(int(metadata.bitrate)) + ' bps'
-        if general.duration is not None: metadata.duration = self._formatedDuration(general.duration / 1000)
+        if general.duration is not None: metadata.duration = self._formatedDuration(general.duration // 1000)
         elif general.other_duration is not None: metadata.duration = general.other_duration[3][:8]
         for track in av.tracks:
             if track.track_type[0] == 'V':
@@ -500,20 +564,21 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 if track.sampling_rate is not None: metadata.samplerate = str(track.sampling_rate)
             elif track.track_type[0] != 'G': break
         if (not complete): return
-        if general.album is not None: metadata.album = general.album
-        if general.performer is not None: metadata.artist = general.performer
-        if general.director is not None: metadata.author = general.director
-        elif general.composer is not None: metadata.author = general.composer
-        elif general.lyricist is not None: metadata.author = general.lyricist
-        elif general.writer is not None: metadata.author = general.writer
-        elif general.writer is not None: metadata.author = general.author
+        if general.album is not None: metadata.album = self._formatedString(general.album)
+        if general.performer is not None: metadata.artist = self._formatedString(general.performer)
+        if general.director is not None: metadata.author = self._formatedString(general.director)
+        elif general.composer is not None: metadata.author = self._formatedString(general.composer)
+        elif general.lyricist is not None: metadata.author = self._formatedString(general.lyricist)
+        elif general.writer is not None: metadata.author = self._formatedString(general.writer)
+        elif general.writer is not None: metadata.author = self._formatedString(general.author)
         if general.comment is not None: metadata.comment = self._formatedString(general.comment)
-        if general.genre is not None: metadata.genre = general.genre
-        if general.movie_name is not None: metadata.title = general.movie_name
-        elif general.track_name is not None: metadata.title = general.track_name
-        elif general.title is not None: metadata.title = general.title
-        if general.released_date is not None: date = general.released_date
-        elif general.recorded_date is not None: date = general.recorded_date
+        #if general.publisher is not None: metadata.company = self._formatedString(general.publisher)
+        if general.genre is not None: metadata.genre = self._formatedString(general.genre)
+        if general.movie_name is not None: metadata.title = self._formatedString(general.movie_name)
+        elif general.track_name is not None: metadata.title = self._formatedString(general.track_name)
+        elif general.title is not None: metadata.title = self._formatedString(general.title)
+        if general.released_date is not None: date = self._formatedString(general.released_date)
+        elif general.recorded_date is not None: date = self._formatedString(general.recorded_date)
         else: date = placeholder
         metadata.date = self._formatedDate(general.released_date)
         metadata.year = metadata.date[:4]
@@ -530,8 +595,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             author = audio.get('LYRICIST')
             if author is None: author = audio.get('WRITER')
         if author is not None: metadata.author = self._formatedStringList(author)
-        metadata.bitrate = str(audio.info.bitrate / 1000)
+        metadata.bitrate = str(audio.info.bitrate // 1000)
         metadata.comment = self._formatedStringList(audio.get('COMMENT', [placeholder]))
+        #metadata.company = self._formatedString(audio.get('LABEL', [placeholder]))
         metadata.duration = self._formatedDuration(audio.info.length)
         metadata.genre = self._formatedStringList(audio.get('GENRE', [placeholder]))
         metadata.samplerate = str(audio.info.sample_rate)
@@ -572,7 +638,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.artist = self._formatedStringList(av.get('\xA9ART', [placeholder]))
         metadata.author = self._formatedStringList(av.get('\xA9wrt', [placeholder]))
         if (fileSize is not None):
-            metadata.bitrate = str(int(fileSize / (self._parsedDuration(metadata.duration) * 125)))
+            metadata.bitrate = str(int(fileSize // (self._parsedDuration(metadata.duration) * 125)))
         metadata.comment = self._formatedStringList(av.get('\xA9cmt', [placeholder]))
         metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
         metadata.duration = self._formatedDuration(av.info.length)
@@ -611,18 +677,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             else: 
                 self._fetchUnspecifiedAVMetadata(metadata, path)
             if ((metadata.bitrate == placeholder) and (metadata.duration != placeholder)):
-                metadata.bitrate = str(fileSize / (self._parsedDuration(metadata.duration) * 125))
-            # DSF, MIDI, AAC
+                metadata.bitrate = str(fileSize // (self._parsedDuration(metadata.duration) * 125))
+            # DSF, TTA, AAC
             
     def _fetchSubRipMetadata( self, metadata, path ):
-        try: subtitles = open(path, 'r')
-        except: return
-        timeRegex = re.compile('[0-9][0-9]:[0-9][0-9]:[0-9][0-9],[0-9][0-9][0-9]')
-        times = [line for line in subtitles if timeRegex.match(line)]
-        size = subtitles.tell()
-        if (len(times) > 0): 
-            metadata.duration = times[-1].strip()[-12:-4]
-            metadata.bitrate = str((size / self._parsedDuration(metadata.duration)) * 8) + ' bps'
+        with open(path, 'r') as subtitles:
+            timeRegex = re.compile('[0-9][0-9]:[0-9][0-9]:[0-9][0-9],[0-9][0-9][0-9]')
+            times = [line for line in subtitles if timeRegex.match(line)]
+            size = subtitles.tell()
+            if (len(times) > 0): 
+                metadata.duration = times[-1].strip()[-12:-4]
+                metadata.bitrate = str((size // self._parsedDuration(metadata.duration)) * 8) + ' bps'
             
     def _fetchXSPFMetadata( self, metadata, path ):
         with open(path, 'r') as playlist:
@@ -662,7 +727,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _fetchZIPMetadata( self, metadata, path ):
         try: archive = ZIPFile(path, 'r')
         except: return
-        comment = archive.comment.decode('utf-8', errors='ignore')
+        comment = self._unicode(archive.comment)
         if (len(comment) > 0): metadata.comment = self._formatedString(comment)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
@@ -877,6 +942,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _initializeSuffixToMethodMap( self ):
         self._suffixToMethodMap = dict()
         self._suffixToMethodMap['desktop'] = 'self._fetchDesktopEntryMetadata'
+        self._suffixToMethodMap['doc'] = 'self._fetchOLECompoundFileMetadata'
         self._suffixToMethodMap['docx'] = 'self._fetchOfficeOpenXMLMetadata'
         self._suffixToMethodMap['epub'] = 'self._fetchEPUBMetadata'
         self._suffixToMethodMap['flac'] = 'self._fetchFLACMetadata'
@@ -888,6 +954,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._suffixToMethodMap['html'] = 'self._fetchHTMLMetadata'
         self._suffixToMethodMap['htm'] = 'self._fetchHTMLMetadata'
         self._suffixToMethodMap['html'] = 'self._fetchHTMLMetadata'
+        self._suffixToMethodMap['kar'] = 'self._fetchMIDIMetadata'
         self._suffixToMethodMap['m4a'] = 'self._fetchAVMetadata'
         self._suffixToMethodMap['m4b'] = 'self._fetchAVMetadata'
         self._suffixToMethodMap['m4p'] = 'self._fetchAVMetadata'
@@ -895,6 +962,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._suffixToMethodMap['midi'] = 'self._fetchMIDIMetadata'
         self._suffixToMethodMap['mid'] = 'self._fetchMIDIMetadata'
         self._suffixToMethodMap['mks'] = 'self._fetchUnspecifiedAVMetadata'
+        self._suffixToMethodMap['mp3'] = 'self._fetchAVMetadata'
+        self._suffixToMethodMap['mpp'] = 'self._fetchOLECompoundFileMetadata'
         self._suffixToMethodMap['odg'] = 'self._fetchOpenDocumentMetadata'
         self._suffixToMethodMap['odp'] = 'self._fetchOpenDocumentMetadata'
         self._suffixToMethodMap['ods'] = 'self._fetchOpenDocumentMetadata'
@@ -903,6 +972,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._suffixToMethodMap['ofr'] = 'self._fetchOptimFROGMetadata'
         self._suffixToMethodMap['ofs'] = 'self._fetchOptimFROGMetadata'
         self._suffixToMethodMap['pdf'] = 'self._fetchPDFMetadata'
+        self._suffixToMethodMap['ppt'] = 'self._fetchOLECompoundFileMetadata'
         self._suffixToMethodMap['pptx'] = 'self._fetchOfficeOpenXMLMetadata'
         self._suffixToMethodMap['ra'] = 'self._fetchUnspecifiedAVMetadata'
         self._suffixToMethodMap['ram'] = 'self._fetchUnspecifiedAVMetadata'
@@ -910,9 +980,11 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._suffixToMethodMap['rmvb'] = 'self._fetchUnspecifiedAVMetadata'
         self._suffixToMethodMap['srt'] = 'self._fetchSubRipMetadata'
         self._suffixToMethodMap['xhtml'] = 'self._fetchHTMLMetadata'
+        self._suffixToMethodMap['xls'] = 'self._fetchOLECompoundFileMetadata'
         self._suffixToMethodMap['xlsx'] = 'self._fetchOfficeOpenXMLMetadata'
         self._suffixToMethodMap['xspf'] = 'self._fetchXSPFMetadata'
         self._suffixToMethodMap['torrent'] = 'self._fetchTorrentMetadata'
+        self._suffixToMethodMap['vsd'] = 'self._fetchOLECompoundFileMetadata'
         self._suffixToMethodMap['zip'] = 'self._fetchZIPMetadata'
 
     def __init__( self ):
