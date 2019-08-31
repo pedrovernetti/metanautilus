@@ -102,7 +102,6 @@ class fileMetadata():
         self.title = placeholder
         self.tracknumber = placeholder
         self.width = placeholder
-        self.year = placeholder
         self.exif_flash = placeholder
 
     def nonBlankFields( self ):
@@ -122,7 +121,6 @@ class fileMetadata():
         if (self.title != placeholder): nonBlankCount += 1
         if (self.tracknumber != placeholder): nonBlankCount += 1
         if (self.width != placeholder): nonBlankCount += 1
-        if (self.year != placeholder): nonBlankCount += 1
         if (self.exif_flash != placeholder): nonBlankCount += 1
         return nonBlankCount
 
@@ -359,9 +357,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         #field = parsedXML.find('//publisher')
         #if (field is not None): metadata.company = field.text
         field = parsedXML.find('//date')
-        if (field is not None): 
-            metadata.date = field.text[:10]
-            metadata.year = metadata.date[:4]
+        if (field is not None): metadata.date = field.text[:10]
         field = parsedXML.find('//title')
         if (field is not None): metadata.title = field.text
 
@@ -415,9 +411,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             field = parsedXML.find('//creator')
             if (field is not None): metadata.author = self._formatedString(field.text)
             field = parsedXML.find('//created')
-            if (field is not None): 
-                metadata.date = self._formatedDate(field.text)
-                metadata.year = metadata.date[:4]
+            if (field is not None): metadata.date = self._formatedDate(field.text)
             field = parsedXML.find('//description')
             if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
             field = parsedXML.find('//title')
@@ -471,9 +465,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
         field = parsedXML.find('//creation-date')
         if (field is None): field = parsedXML.find('//date')
-        if (field is not None): 
-            metadata.date = self._formatedDate(field.text[:10])
-            metadata.year = metadata.date[:4]
+        if (field is not None): metadata.date = self._formatedDate(field.text[:10])
         field = parsedXML.find('//title')
         if (field is not None): metadata.title = self._formatedString(field.text)
 
@@ -493,9 +485,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         #metadata.company = self._formatedString(company) if (company is not None) else placeholder
         date = info.get('/CreationDate')
         if (isinstance(date, PDFIndirectObject)): date = document.getObject(date)
-        if (date is not None):
-            metadata.date = self._formatedDate(date)
-            metadata.year = metadata.date[:4]
+        if (date is not None): metadata.date = self._formatedDate(date)
         title = info.get('/Title', placeholder)
         if (isinstance(title, PDFIndirectObject)): title = document.getObject(title)
         metadata.title = self._formatedString(title) if (title is not None) else placeholder
@@ -508,9 +498,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         try:
             image = pyexiv2.ImageMetadata(path)
             image.read()
-            try:
-                metadata.date = self._formatedDate(image['Exif.Photo.DateTimeOriginal'].raw_value)
-                metadata.year = metadata.date[:4]
+            try: metadata.date = self._formatedDate(image['Exif.Photo.DateTimeOriginal'].raw_value)
             except: pass
             try: metadata.camera = self._formatedString(image['Exif.Image.Model'].raw_value)
             except: pass
@@ -544,9 +532,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.genre = self._formatedStringList(audio.get('Genre', [placeholder]))
         metadata.title = self._formatedString(audio.get('Title', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('Track', [placeholder])[0])
-        date = audio.get('Year', [placeholder])[0][:10]
-        metadata.date = self._formatedDate(date)
-        metadata.year = date[:4]
+        metadata.date = self._formatedDate(audio.get('Year', [placeholder])[0][:10])
 
     def _fetchID3Metadata( self, metadata, pathOrFile ):
         try: audio = mutagen.id3.ID3(pathOrFile)
@@ -567,7 +553,6 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (date is not None): date = date[0].get_text()[:10]
         else: date = audio.get('TYER', [placeholder])[0][:10]
         metadata.date = self._formatedDate(date)
-        metadata.year = date[:4]
 
     def _fetchUnspecifiedAVMetadata( self, metadata, path, complete = True ):
         try: av = MediaInfo.parse(path)
@@ -604,7 +589,6 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         elif (general.recorded_date is not None): date = self._formatedString(general.recorded_date)
         else: date = placeholder
         metadata.date = self._formatedDate(general.released_date)
-        metadata.year = metadata.date[:4]
         if (general.track_name_position is not None):
             metadata.tracknumber = self._formatedTrackNumber(general.track_name_position)
             
@@ -628,7 +612,6 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.tracknumber = self._formatedTrackNumber(audio.get('TRACKNUMBER', [placeholder])[0])
         date = audio.get('DATE', [placeholder])[0][:10]
         metadata.date = self._formatedDate(date)
-        metadata.year = date[:4]
         
     def _fetchMIDIMetadata( self, metadata, path ):
         with open(path, 'rb') as audio:
@@ -666,7 +649,6 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.samplerate = str(av.info.sample_rate)
         metadata.title = av.get('\xA9nam', [placeholder])[0]
         metadata.tracknumber = self._formatedTrackNumber(str(av.get('trkn', [[None]])[0][0]))
-        metadata.year = av.get('\xA9day', [placeholder])[0][:4]
 
     def _fetchOptimFROGMetadata( self, metadata, pathOrFile ):
         self._fetchAPEv2Metadata(metadata, pathOrFile)
@@ -738,9 +720,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         try: torrent = Torrent.from_file(path)
         except: return
         if (torrent.created_by is not None): metadata.author = torrent.created_by
-        if (torrent.creation_date is not None):
-            metadata.date = torrent.creation_date.isoformat()[:10]
-            metadata.year = metadata.date[:4]
+        if (torrent.creation_date is not None): metadata.date = torrent.creation_date.isoformat()[:10]
         if (torrent.comment is not None): metadata.comment = self._formatedString(torrent.comment)
         if (torrent.name is not None): metadata.title = torrent.name
         
