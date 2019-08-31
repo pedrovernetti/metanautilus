@@ -232,6 +232,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         return (re.sub(r'[\x00-\x1F\x7F-\xFF]', '', someString))
     
     def _unicode( self, something, encoding = 'utf_8', ignoreErrors = False ):
+        if (something is None): return u''
         result = u''
         errorsMode = ('ignore' if (ignoreErrors) else 'replace')
         try:
@@ -243,6 +244,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 if (isinstance(something, str)): return something
                 try: result = str(something, encoding)
                 except UnicodeError: result = str(something, 'ascii', errorsMode)
+        except LookupError:
+            result = self._unicode(something, 'ascii', ignoreErrors)
         except TypeError:
             try: result = str(something)
             except: pass
@@ -325,12 +328,18 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         elif (len(stringList) == 0): return placeholder
         finalString = u''
         for item in stringList: 
+            if (item is None): continue
             item = self._unicode(item).replace('\n', ' ').replace('\r', ' ').strip()
             if (len(item) <= 1): continue
             if ((len(finalString) + len(item)) > maxFieldSize): 
-                return ((finalString + '...') if (len(finalString) > 0) else self._formatedString(item))
-            finalString += item + '; '
-        return finalString.replace('\x00', '')[:-1]
+                if (len(finalString) > 2): finalString += u'...'
+                else: finalString = self._formatedString(item)
+                break
+            finalString += item + u'; '
+        finalString = finalString.replace('\x00', '')[:-1]
+        if (len(finalString) < 2): return placeholder
+        elif (len(finalString) <= maxFieldSize): return finalString
+        else: return (finalString[:(maxFieldSize - 3)] + ' [...]')
 
     def _formatedTrackNumber( self, trackNumberString ):
         pos = 0
@@ -494,24 +503,41 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # FETCHING METADATA FROM IMAGES
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _fetchImageMetadata( self, metadata, path, mime ):
-        try:
-            image = pyexiv2.ImageMetadata(path)
-            image.read()
-            try: metadata.date = self._formatedDate(image['Exif.Photo.DateTimeOriginal'].raw_value)
-            except: pass
-            try: metadata.camera = self._formatedString(image['Exif.Image.Model'].raw_value)
-            except: pass
-            try: metadata.exif_flash = str(image['Exif.Photo.Flash'].raw_value)
-            except: pass
-        except:
-            pass
-        try:
-            image = Image.open(path)
-            metadata.width = str(image.size[0])
-            metadata.height = str(image.size[1])
-        except:
-            pass
+    def _fetchUnspecifiedImageMetadata( self, metadata, path ):
+        pass
+
+    def _fetchImageMetadata( self, metadata, path ):
+        #try: image = pyexiv2.ImageMetadata(path)
+        #except: return
+        #image.read()
+        #try: metadata.camera = self._formatedString(image['Exif.Image.Model'].raw_value)
+        #except: pass
+        #try: metadata.exif_flash = str(image['Exif.Photo.Flash'].raw_value)
+        #except: pass
+            
+        try: image = Image.open(path, 'r')
+        #except : # try other image reading methods
+        except: return
+        #metadata.channels = str(image.layers)
+        #metadata.encoding = self._unicode(image.format, ignoreErrors=True)
+        metadata.height = str(image.height)
+        metadata.width = str(image.width)
+        try: EXIF = image._getexif()
+        except: EXIF = None
+        image.close()
+        if ((EXIF is None) or (len(EXIF) < 1)):
+            self._fetchUnspecifiedImageMetadata(metadata, path)
+            return
+        cameraModel = EXIF.get(272, EXIF.get(50709, EXIF.get(50708, EXIF.get(271, EXIF.get(50735)))))
+        cameraOwner = EXIF.get(42032)
+        cameraOwner = (cameraOwner + ' (?)') if (cameraOwner is not None) else placeholder
+        date = EXIF.get(36867, EXIF.get(36868, EXIF.get(306, EXIF.get(29, placeholder))))
+        metadata.album = self._formatedString(EXIF.get(269, placeholder))
+        metadata.author = self._formatedString(EXIF.get(315, EXIF.get(40093, cameraOwner)))
+        metadata.comment = self._formatedStringList([EXIF.get(37510), EXIF.get(40092)])
+        metadata.date = self._formatedDate(date[:10])
+        if (cameraModel is not None): metadata.camera = self._formatedString(cameraModel)
+        metadata.title = self._formatedString(EXIF.get(270, EXIF.get(40091, placeholder)))
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FETCHING METADATA FROM AUDIO/VIDEO
@@ -528,7 +554,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (author is None): author = audio.get('Writer')
         if (author is not None): metadata.author = self._formatedStringList(author)
         metadata.comment = self._formatedStringList(audio.get('Comment', [placeholder]))
-        #metadata.company = self._formatedString(audio.get('Label', [placeholder]))
+        #metadata.company = self._formatedStringList(audio.get('Label', [placeholder]))
         metadata.genre = self._formatedStringList(audio.get('Genre', [placeholder]))
         metadata.title = self._formatedString(audio.get('Title', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('Track', [placeholder])[0])
@@ -546,6 +572,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (len(comments) > 0):
             comments = [self._unicode(comment, comment.encoding) for comment in comments]
             metadata.comment = self._formatedStringList(comments)
+        #metadata.company = self._formatedStringList(audio.get('TPUB', [placeholder]))
         metadata.genre = self._formatedStringList(audio.get('TCON', [placeholder]))
         metadata.title = self._formatedString(audio.get('TIT2', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('TRCK', [placeholder])[0])
@@ -643,6 +670,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (fileSize is not None):
             metadata.bitrate = str(int(fileSize // (self._parsedDuration(metadata.duration) * 125)))
         metadata.comment = self._formatedStringList(av.get('\xA9cmt', [placeholder]))
+        #metadata.company = self._formatedStringList(av.get('----:com.apple.iTunes:LABEL', [placeholder]))
         metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
         metadata.duration = self._formatedDuration(av.info.length)
         metadata.genre = self._formatedStringList(av.get('\xA9gen', [placeholder]))
@@ -681,6 +709,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if ((metadata.bitrate == placeholder) and (metadata.duration != placeholder)):
                 metadata.bitrate = str(fileSize // (self._parsedDuration(metadata.duration) * 125))
             # DSF, TTA, AAC
+
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    # FETCHING METADATA FROM PLAYLISTS AND SUBTITLES
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
             
     def _fetchSubRipMetadata( self, metadata, path ):
         with open(path, 'r') as subtitles:
@@ -796,14 +828,14 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             metadata = fileMetadata()
             mime = file.get_mime_type()
+            #self._mute() # Muting to hide possible third-party complaints
             try:
-                #self._mute() # Muting to hide possible third-party complaints
                 mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
-                if (mappedMethod is not None):
+                if (mappedMethod is not None): 
                     mappedMethod(metadata, path)
-                elif (mime.startswith('ima')):
-                    self._fetchImageMetadata(metadata, path, mime)
-                elif (mime.startswith(('aud', 'vid'))):
+                elif (mime.startswith('ima')): 
+                    self._fetchImageMetadata(metadata, path)
+                elif (mime.startswith(('aud', 'vid'))): 
                     self._fetchAVMetadata(metadata, path)
                 elif (mime.startswith('app')):
                     mime = mime[12:]
