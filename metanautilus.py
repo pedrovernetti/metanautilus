@@ -93,6 +93,7 @@ class fileMetadata():
         self.bitrate = placeholder
         self.camera = placeholder
         self.comment = placeholder
+        self.company = placeholder
         self.date = placeholder
         self.duration = placeholder
         self.genre = placeholder
@@ -112,6 +113,7 @@ class fileMetadata():
         if (self.bitrate != placeholder): nonBlankCount += 1
         if (self.camera != placeholder): nonBlankCount += 1
         if (self.comment != placeholder): nonBlankCount += 1
+        if (self.company != placeholder): nonBlankCount += 1
         if (self.date != placeholder): nonBlankCount += 1
         if (self.duration != placeholder): nonBlankCount += 1
         if (self.genre != placeholder): nonBlankCount += 1
@@ -319,7 +321,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         anyString = self._unicode(anyString, encoding)
         if (len(anyString) < 1): return placeholder
         anyString = anyString.replace('\x00', '').replace('\n', ' ').replace('\r', ' ').strip()
-        if (len(anyString) > maxFieldSize): anyString = anyString[:(maxFieldSize - 3)] + ' [...]'
+        if (len(anyString) < 1): return placeholder
+        elif (len(anyString) > maxFieldSize): anyString = anyString[:(maxFieldSize - 3)] + ' [...]'
         return anyString
 
     def _formatedStringList( self, stringList, encoding = 'utf_8' ):
@@ -363,8 +366,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (field is not None): metadata.author = field.text
         field = parsedXML.find('//description')
         if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
-        #field = parsedXML.find('//publisher')
-        #if (field is not None): metadata.company = field.text
+        field = parsedXML.find('//publisher')
+        if (field is not None): metadata.company = field.text
         field = parsedXML.find('//date')
         if (field is not None): metadata.date = field.text[:10]
         field = parsedXML.find('//title')
@@ -408,8 +411,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             field = parsedXML.find('//Pages')
             if (field is None): field = parsedXML.find('//Slides')
             if (field is not None): metadata.pages = self._formatedString(field.text)
-            #field = parsedXML.find('//Company')
-            #if (field is not None): metadata.company = self._formatedString(field.text)
+            field = parsedXML.find('//Company')
+            if (field is not None): metadata.company = self._formatedString(field.text)
             XMLMetadataFile.close()
         except:
             pass
@@ -442,8 +445,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             metadata.author = self._formatedString(documentMetadata.author, encoding)
         if (documentMetadata.comments is not None):
             metadata.comment = self._formatedStringList(documentMetadata.comments, encoding)
-        #if (documentMetadata.company is not None):
-        #    metadata.company = self._formatedStringList(documentMetadata.company, encoding)
+        if (documentMetadata.company is not None):
+            metadata.company = self._formatedStringList(documentMetadata.company, encoding)
         if (documentMetadata.create_time is not None):
             metadata.date = documentMetadata.create_time.strftime('%Y-%m-%d')
         if (documentMetadata.category is not None):
@@ -489,9 +492,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         author = info.get('/Author')
         if (isinstance(author, PDFIndirectObject)): author = document.getObject(author)
         metadata.author = self._formatedString(author) if (author is not None) else placeholder
-        #company = info.get('/EBX_PUBLISHER', placeholder)
-        #if (isinstance(company, PDFIndirectObject)): company = document.getObject(company)
-        #metadata.company = self._formatedString(company) if (company is not None) else placeholder
+        company = info.get('/EBX_PUBLISHER', placeholder)
+        if (isinstance(company, PDFIndirectObject)): company = document.getObject(company)
+        metadata.company = self._formatedString(company) if (company is not None) else placeholder
         date = info.get('/CreationDate')
         if (isinstance(date, PDFIndirectObject)): date = document.getObject(date)
         if (date is not None): metadata.date = self._formatedDate(date)
@@ -554,7 +557,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (author is None): author = audio.get('Writer')
         if (author is not None): metadata.author = self._formatedStringList(author)
         metadata.comment = self._formatedStringList(audio.get('Comment', [placeholder]))
-        #metadata.company = self._formatedStringList(audio.get('Label', [placeholder]))
+        metadata.company = self._formatedStringList(audio.get('Label', [placeholder]))
         metadata.genre = self._formatedStringList(audio.get('Genre', [placeholder]))
         metadata.title = self._formatedString(audio.get('Title', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('Track', [placeholder])[0])
@@ -572,7 +575,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (len(comments) > 0):
             comments = [self._unicode(comment, comment.encoding) for comment in comments]
             metadata.comment = self._formatedStringList(comments)
-        #metadata.company = self._formatedStringList(audio.get('TPUB', [placeholder]))
+        metadata.company = self._formatedStringList(audio.get('TPUB', [placeholder]))
         metadata.genre = self._formatedStringList(audio.get('TCON', [placeholder]))
         metadata.title = self._formatedString(audio.get('TIT2', [placeholder])[0])
         metadata.tracknumber = self._formatedTrackNumber(audio.get('TRCK', [placeholder])[0])
@@ -607,7 +610,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         elif (general.writer is not None): metadata.author = self._formatedString(general.writer)
         elif (general.writer is not None): metadata.author = self._formatedString(general.author)
         if (general.comment is not None): metadata.comment = self._formatedString(general.comment)
-        #if (general.publisher is not None): metadata.company = self._formatedString(general.publisher)
+        if (general.publisher is not None): metadata.company = self._formatedString(general.publisher)
         if (general.genre is not None): metadata.genre = self._formatedString(general.genre)
         if (general.movie_name is not None): metadata.title = self._formatedString(general.movie_name)
         elif (general.track_name is not None): metadata.title = self._formatedString(general.track_name)
@@ -631,7 +634,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (author is not None): metadata.author = self._formatedStringList(author)
         metadata.bitrate = str(audio.info.bitrate // 1000)
         metadata.comment = self._formatedStringList(audio.get('COMMENT', [placeholder]))
-        #metadata.company = self._formatedString(audio.get('LABEL', [placeholder]))
+        metadata.company = self._formatedString(audio.get('LABEL', [placeholder]))
         metadata.duration = self._formatedDuration(audio.info.length)
         metadata.genre = self._formatedStringList(audio.get('GENRE', [placeholder]))
         metadata.samplerate = str(audio.info.sample_rate)
@@ -670,7 +673,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (fileSize is not None):
             metadata.bitrate = str(int(fileSize // (self._parsedDuration(metadata.duration) * 125)))
         metadata.comment = self._formatedStringList(av.get('\xA9cmt', [placeholder]))
-        #metadata.company = self._formatedStringList(av.get('----:com.apple.iTunes:LABEL', [placeholder]))
+        metadata.company = self._formatedStringList(av.get('----:com.apple.iTunes:LABEL', [placeholder]))
         metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
         metadata.duration = self._formatedDuration(av.info.length)
         metadata.genre = self._formatedStringList(av.get('\xA9gen', [placeholder]))
@@ -776,6 +779,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         file.add_string_attribute('bitrate', placeholder)
         file.add_string_attribute('camera', placeholder)
         file.add_string_attribute('comment', placeholder)
+        file.add_string_attribute('company', placeholder)
         file.add_string_attribute('date', placeholder)
         file.add_string_attribute('dimensions', placeholder)
         file.add_string_attribute('duration', placeholder)
@@ -797,6 +801,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             (' kbps' if ((metadata.bitrate != placeholder) and (metadata.bitrate[-1] != 's')) else ''))
         file.add_string_attribute('camera', metadata.camera)
         file.add_string_attribute('comment', metadata.comment)
+        file.add_string_attribute('company', metadata.company)
         file.add_string_attribute('date', metadata.date)
         if (metadata.width != placeholder) and (metadata.height != placeholder):
             file.add_string_attribute('dimensions', (metadata.width + 'x' + metadata.height))
@@ -906,6 +911,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 label="Camera Model",       description="Camera model used to take the picture"),
             Nautilus.Column(name='Metanautilus::comment_col',      attribute='comment',
                 label="Comment",            description="Comment"),
+            Nautilus.Column(name='Metanautilus::company_col',      attribute='company',
+                label="Company",            description="Company"),
             Nautilus.Column(name='Metanautilus::date_col',         attribute='date',
                 label="Date",               description="Year, Month and Day"),
             Nautilus.Column(name='Metanautilus::dimensions_col',   attribute='dimensions',

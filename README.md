@@ -22,6 +22,7 @@ Metanautilus is a python extension for [Nautilus](https://en.wikipedia.org/wiki/
 * __Bitrate__ *[Overall Bitrate, for multitrack files] [kbps]*
 * __Camera Model__
 * __Comment__ *[same as Description, Information]*
+* __Company__ *[song's Record Label, document's Author's Company; same as Publisher, usually]*
 * __Date__ *[images' Capture Date, audio/video Release Date, documents' Creation Date, ...] [YYYY-MM-DD]*
 * __Dimensions__ *[WxH]*
 * __Duration__ *[HH:MM:SS]*
