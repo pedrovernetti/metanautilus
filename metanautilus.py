@@ -152,6 +152,15 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         now = datetime.now()
         prettyTime = ("{:%H:%M:%S.}".format(now) + str(now.microsecond * 1000))[:12]
         sys.__stdout__.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
+        
+    def _logException( self, exception, relatedFilePath = None ):
+        traceback = sys.exc_info()[2]
+        errorText = self._unicode(exception, 'ascii', True)
+        errorFile = os.path.split(traceback.tb_frame.f_code.co_filename)[1]
+        errorLine = str(traceback.tb_lineno)
+        details = ": \x1B[3m" + errorText + "\x1B[0m at " + errorFile + ", line " + errorLine
+        if (relatedFilePath is not None): details = " from '" + relatedFilePath + "'" + details
+        self._logMessage(("Error fetching metadata" + details), True)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # MANAGING AND USING THE CACHES
@@ -227,18 +236,20 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _unicode( self, something, encoding = 'utf_8', ignoreErrors = False ):
         result = u''
         errorsMode = ('ignore' if (ignoreErrors) else 'replace')
-        if (pythonIs2OrOlder): 
-            if (isinstance(something, unicode)): return something
-            try: result = unicode(something, encoding)
-            except TypeError:
-                try: result = str(something)
-                except: pass
-            except UnicodeError: result = something.decode('ascii', errorsMode)
+        try:
+            if (pythonIs2OrOlder): 
+                if (isinstance(something, unicode)): return something
+                try: result = unicode(something, encoding)
+                except UnicodeError: result = unicode(something, 'ascii', errorsMode)
+            else:
+                if (isinstance(something, str)): return something
+                try: result = str(something, encoding)
+                except UnicodeError: result = str(something, 'ascii', errorsMode)
+        except TypeError:
+            try: result = str(something)
             except: pass
-        else:
-            try: result = str(something, encoding)
-            except UnicodeError: result = something.decode('ascii', errorsMode)
-            except: pass
+        except:
+            pass
         return result
     
     def _parsedDuration( self, durationString ):
@@ -385,7 +396,8 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _fetchOfficeOpenXMLMetadata( self, metadata, path ):
         try: document = ZIPFile(path, 'r')
         except: return
-        with document.open('docProps/app.xml') as XMLMetadataFile:
+        try: 
+            XMLMetadataFile = document.open('docProps/app.xml')
             parsedXML = self._parsedXML(XMLMetadataFile)
             if (parsedXML is None): return
             field = parsedXML.find('//Pages')
@@ -393,7 +405,11 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (field is not None): metadata.pages = self._formatedString(field.text)
             #field = parsedXML.find('//Company')
             #if (field is not None): metadata.company = self._formatedString(field.text)
-        with document.open('docProps/core.xml') as XMLMetadataFile:
+            XMLMetadataFile.close()
+        except:
+            pass
+        try:
+            XMLMetadataFile = document.open('docProps/core.xml')
             parsedXML = self._parsedXML(XMLMetadataFile)
             if (parsedXML is None): return
             field = parsedXML.find('//creator')
@@ -406,6 +422,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
             field = parsedXML.find('//title')
             if (field is not None): metadata.title = self._formatedString(field.text)
+            XMLMetadataFile.close()
+        except:
+            pass
             
     def _fetchOLECompoundFileMetadata( self, metadata, path ):
         try: 
@@ -462,7 +481,9 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         try: document = PDFFile(path, strict=False)
         except: return
         if (document.isEncrypted): return
-        metadata.pages = str(document.numPages)
+        pages = document.numPages
+        if (isinstance(pages, PDFIndirectObject)): pages = document.getObject(pages)
+        metadata.pages = self._unicode(pages)
         info = document.documentInfo
         author = info.get('/Author')
         if (isinstance(author, PDFIndirectObject)): author = document.getObject(author)
@@ -548,7 +569,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         metadata.date = self._formatedDate(date)
         metadata.year = date[:4]
 
-    def _fetchUnspecifiedAVMetadata( self, metadata, path, complete=True ):
+    def _fetchUnspecifiedAVMetadata( self, metadata, path, complete = True ):
         try: av = MediaInfo.parse(path)
         except: return
         general = av.tracks[0]
@@ -795,19 +816,23 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             metadata = fileMetadata()
             mime = file.get_mime_type()
-            #self._mute() # Muting to hide possible third-party complaints
-            mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
-            if (mappedMethod is not None):
-                mappedMethod(metadata, path)
-            elif (mime.startswith('ima')):
-                self._fetchImageMetadata(metadata, path, mime)
-            elif (mime.startswith(('aud', 'vid'))):
-                self._fetchAVMetadata(metadata, path)
-            elif (mime.startswith('app')):
-                mime = mime[12:]
-                if (mime.endswith('pdf')): self._fetchPDFMetadata(metadata, path)
-                elif (mime.startswith('epub')): self._fetchEPUBMetadata(metadata, path)
-                elif (mime.endswith('torrent')): self._fetchTorrentMetadata(metadata, path)
+            try:
+                #self._mute() # Muting to hide possible third-party complaints
+                mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
+                if (mappedMethod is not None):
+                    mappedMethod(metadata, path)
+                elif (mime.startswith('ima')):
+                    self._fetchImageMetadata(metadata, path, mime)
+                elif (mime.startswith(('aud', 'vid'))):
+                    self._fetchAVMetadata(metadata, path)
+                elif (mime.startswith('app')):
+                    mime = mime[12:]
+                    if (mime.endswith('pdf')): self._fetchPDFMetadata(metadata, path)
+                    elif (mime.startswith('epub')): self._fetchEPUBMetadata(metadata, path)
+                    elif (mime.endswith('torrent')): self._fetchTorrentMetadata(metadata, path)
+            except Exception as someException:
+                self._logException(someException, path)
+                self._assignNothingToFile(file)
             self._unmute()
             self._assignMetadataToFile(metadata, file)
             if (isLocal): self._remember(metadata, status)
