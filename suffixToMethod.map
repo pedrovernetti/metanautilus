@@ -1,3 +1,5 @@
+!ut     _fetchMagicallyIdentifiedMetadata
+ape     _fetchAVMetadata
 bin     _fetchNoMetadataAtAll
 desktop _fetchDesktopEntryMetadata
 doc     _fetchOLECompoundFileMetadata
@@ -11,7 +13,9 @@ fodt    _fetchOpenDocumentMetadata
 hevc    _fetchUnspecifiedAVMetadata
 html    _fetchHTMLMetadata
 htm     _fetchHTMLMetadata
-html    _fetchHTMLMetadata
+jpe     _fetchImageMetadata
+jpeg    _fetchImageMetadata
+jpg     _fetchImageMetadata
 kar     _fetchMIDIMetadata
 m4a     _fetchAVMetadata
 m4b     _fetchAVMetadata
@@ -19,9 +23,14 @@ m4p     _fetchAVMetadata
 md      _fetchMarkdownMetadata
 midi    _fetchMIDIMetadata
 mid     _fetchMIDIMetadata
+mk3d    _fetchUnspecifiedAVMetadata
+mka     _fetchUnspecifiedAVMetadata
 mks     _fetchUnspecifiedAVMetadata
+mkv     _fetchUnspecifiedAVMetadata
+mp+     _fetchAVMetadata
 mp3     _fetchAVMetadata
-mpp     _fetchOLECompoundFileMetadata
+mp4     _fetchUnspecifiedAVMetadata
+mpc     _fetchAVMetadata
 odg     _fetchOpenDocumentMetadata
 odp     _fetchOpenDocumentMetadata
 ods     _fetchOpenDocumentMetadata
@@ -29,6 +38,11 @@ odt     _fetchOpenDocumentMetadata
 ofg     _fetchOptimFROGMetadata
 ofr     _fetchOptimFROGMetadata
 ofs     _fetchOptimFROGMetadata
+oga     _fetchAVMetadata
+ogg     _fetchAVMetadata
+ogv     _fetchAVMetadata
+ole     _fetchOLECompoundFileMetadata
+part    _fetchMagicallyIdentifiedMetadata
 pdf     _fetchPDFMetadata
 ppt     _fetchOLECompoundFileMetadata
 pptx    _fetchOfficeOpenXMLMetadata
@@ -41,6 +55,7 @@ xhtml   _fetchHTMLMetadata
 xls     _fetchOLECompoundFileMetadata
 xlsx    _fetchOfficeOpenXMLMetadata
 xspf    _fetchXSPFMetadata
+tmp     _fetchMagicallyIdentifiedMetadata
 torrent _fetchTorrentMetadata
 vsd     _fetchOLECompoundFileMetadata
 zip     _fetchZIPMetadata

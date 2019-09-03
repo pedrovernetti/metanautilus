@@ -45,9 +45,9 @@ tryDoing sudo $pip install pypdf2
 tryDoing sudo $pip install olefile
 tryDoing sudo $pip install torrentool
 
-printf "\033[1mCopying files to the (just created) data folder...\033[0m\n"
+printf "\033[1mCopying mapping files to the (just created) data folder...\033[0m\n"
 tryDoing sudo mkdir -p "$data_folder"
-tryDoing sudo cp -i "${selfpath%/*}/suffixToMethod.map" "$data_folder"
+tryDoing sudo cp -i "${selfpath%/*}/"*.map "$data_folder"
 
 printf "\033[1mCopying the script to the nautilus-python folder...\033[0m\n"
 tryDoing sudo mkdir -p "$extensions_folder"

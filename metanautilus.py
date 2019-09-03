@@ -21,7 +21,8 @@
 #    binding for Nautilus components) using your package manager;         .
 # 2. with pip, install lxml, pymediainfo, mutagen, mido, pillow, pyexiv2, .
 #    pypdf2, olefile and torrentool;                                      .
-# 3. place suffixToMethod.map at '/usr/share/metanautilus/';              .
+# 3. place at '/usr/share/metanautilus/' all the *.map files accompanying .
+#    this script (such as suffixToMethod.map);                            .
 # 4. place this script at the nautilus-python extensions folder (which    .
 #    uses to be '/usr/share/nautilus-python/extensions');                 .
 # 5. restart Nautilus (run 'nautilus -q; nautilus').                      .
@@ -634,7 +635,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (author is not None): metadata.author = self._formatedStringList(author)
         metadata.bitrate = str(audio.info.bitrate // 1000)
         metadata.comment = self._formatedStringList(audio.get('COMMENT', [placeholder]))
-        metadata.company = self._formatedString(audio.get('LABEL', [placeholder]))
+        metadata.company = self._formatedStringList(audio.get('LABEL', [placeholder]))
         metadata.duration = self._formatedDuration(audio.info.length)
         metadata.genre = self._formatedStringList(audio.get('GENRE', [placeholder]))
         metadata.samplerate = str(audio.info.sample_rate)
@@ -764,10 +765,22 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         except: return
         comment = self._unicode(archive.comment)
         if (len(comment) > 0): metadata.comment = self._formatedString(comment)
+
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    # FETCHING METADATA ON SPECIAL CASES
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
         
     def _fetchNoMetadataAtAll( self, metadata, path ):
         pass
-
+    
+    def _fetchMagicallyIdentifiedMetadata( self, metadata, path ):
+        fileSignature = None
+        with open(path, 'r') as someFile: fileSignature = someFile.read(8)
+        mappedMethod = self._signatureToMethodMap.get(fileSignature)
+        if (mappedMethod is None): 
+            mappedMethod = self._signatureToMethodMap.get(fileSignature[:4], self._fetchNoMetadataAtAll)
+        mappedMethod(metadata, path)
+        
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # CALLING THE PROPER FETCHING FUNCTIONS, THEN ASSIGNING THE METADATA TO EACH FILE
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
@@ -832,27 +845,30 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             self._assignMetadataToFile(previousMetadata[1], file)
         else:
             metadata = fileMetadata()
-            mime = file.get_mime_type()
             #self._mute() # Muting to hide possible third-party complaints
             try:
                 mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
                 if (mappedMethod is not None): 
                     mappedMethod(metadata, path)
-                elif (mime.startswith('ima')): 
-                    self._fetchImageMetadata(metadata, path)
-                elif (mime.startswith(('aud', 'vid'))): 
-                    self._fetchAVMetadata(metadata, path)
-                elif (mime.startswith('app')):
-                    mime = mime[12:]
-                    if (mime.endswith('pdf')): self._fetchPDFMetadata(metadata, path)
-                    elif (mime.startswith('epub')): self._fetchEPUBMetadata(metadata, path)
-                    elif (mime.endswith('torrent')): self._fetchTorrentMetadata(metadata, path)
+                else:
+                    mime = file.get_mime_type()
+                    if (mime.startswith('ima')): self._fetchImageMetadata(metadata, path)
+                    elif (mime.startswith(('aud', 'vid'))): self._fetchAVMetadata(metadata, path)
+                    elif (mime.startswith('app')):
+                        mime = mime[12:]
+                        if (mime.endswith('pdf')): self._fetchPDFMetadata(metadata, path)
+                        elif (mime.startswith('epub')): self._fetchEPUBMetadata(metadata, path)
+                        elif (mime.endswith('torrent')): self._fetchTorrentMetadata(metadata, path)
+                        else: self._fetchMagicallyIdentifiedMetadata(metadata, path)
+                    else:
+                        self._fetchMagicallyIdentifiedMetadata(metadata, path)
             except Exception as someException:
                 self._logException(someException, path)
                 self._assignNothingToFile(file)
-            self._unmute()
-            self._assignMetadataToFile(metadata, file)
-            if (isLocal): self._remember(metadata, status)
+            else:
+                self._unmute()
+                self._assignMetadataToFile(metadata, file)
+                if (isLocal): self._remember(metadata, status)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # HANDLING (PRELIMINARILY) OR SKIPPING EACH FILE
@@ -943,6 +959,31 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # INITIALIZING THE EXTENSION
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
+    def _loadMappings( self ):
+        try: 
+            mapFile = open((dataFolder + 'suffixToMethod.map'), 'r')
+        except:
+            self._logMessage("Could not load suffix-to-method mapping...", True)
+            return
+        else:
+            for line in mapFile:
+                if (len(line) < 8): continue
+                keyAndMethod = line.split(' ')
+                self._suffixToMethodMap[keyAndMethod[0]] = eval('self.' + keyAndMethod[-1])
+            mapFile.close()
+        try: 
+            mapFile = open((dataFolder + 'signatureToMethod.map'), 'r')
+        except:
+            self._logMessage("Could not load signature-to-method mapping...", True)
+            return
+        else:
+            for line in mapFile:
+                if (len(line) < 8): continue
+                keyAndMethod = line.split(' ')
+                key = eval('\'' + keyAndMethod[0] + '\'')
+                self._signatureToMethodMap[key] = eval('self.' + keyAndMethod[-1])
+            mapFile.close()
+
     def _loadOrCreateCache( self, cacheDir, cacheFile, junkCacheFile ):
         if (not (os.path.exists(cacheDir) and os.path.isdir(cacheDir))):
             try: os.makedirs(name=cacheDir)
@@ -982,27 +1023,15 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         pickler.daemon = True
         pickler.start()
         
-    def _loadSuffixToMethodMap( self ):
-        self._suffixToMethodMap = dict()
-        try: 
-            mapFile = open((dataFolder + 'suffixToMethod.map'), 'r')
-        except:
-            self._logMessage("Could not load suffix-to-method mapping...", True)
-            return
-        else:
-            for line in mapFile:
-                if (len(line) < 8): continue
-                suffixAndMethod = line.split(' ')
-                self._suffixToMethodMap[suffixAndMethod[0]] = eval('self.' + suffixAndMethod[-1])
-            mapFile.close()
-
     def __init__( self ):
         self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
         self._lastWarning = ""
         self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
         self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
+        self._suffixToMethodMap = dict()
+        self._signatureToMethodMap = dict()
+        self._loadMappings()
         self._initializeCache()
-        self._loadSuffixToMethodMap()
 
 # =============================================================================================
 
