@@ -1,16 +1,16 @@
-[Desktop                            _fetchDesktopEntryMetadata
-\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1    _fetchOLECompoundFileMetadata
 \x00\x00\x00\x00ftyp                _fetchAVMetadata
 \x00\x00\x00\x20ftyp                _fetchAVMetadata
-d8:annou                            _fetchTorrentMetadata
-0\x26\xB2u\x8Ef\xCF\x11             _fetchUnspecifiedAVMetadata
 \x1AE\xDF\xA3\x93B\x82\x880         _fetchAVMetadata
 \x1AE\xDF\xA3\xA3B\x86\x81          _fetchAVMetadata
+[Desktop                            _fetchDesktopEntryMetadata
+0\x26\xB2u\x8Ef\xCF\x11             _fetchUnspecifiedAVMetadata
+d8:annou                            _fetchTorrentMetadata
+\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1    _fetchOLECompoundFileMetadata
 
 \x25PDF                             _fetchPDFMetadata
 .RMF                                _fetchAVMetadata
 fLaC                                _fetchFLACMetadata
+MAC\x20                             _fetchAVMetadata
 MP+\x07                             _fetchAVMetadata
 MPCK                                _fetchAVMetadata
-MAC\x20ftyp                         _fetchAVMetadata
 OggS                                _fetchUnspecifiedAVMetadata

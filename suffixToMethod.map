@@ -42,6 +42,10 @@ oga     _fetchAVMetadata
 ogg     _fetchAVMetadata
 ogv     _fetchAVMetadata
 ole     _fetchOLECompoundFileMetadata
+otg     _fetchOpenDocumentMetadata
+otp     _fetchOpenDocumentMetadata
+ots     _fetchOpenDocumentMetadata
+ott     _fetchOpenDocumentMetadata
 part    _fetchMagicallyIdentifiedMetadata
 pdf     _fetchPDFMetadata
 ppt     _fetchOLECompoundFileMetadata
