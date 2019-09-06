@@ -37,7 +37,7 @@ from datetime import datetime
 from time import sleep
 try: from urllib import unquote
 except: from urllib import parse as unquote
-from pickle import dump, load, PickleError, HIGHEST_PROTOCOL
+from pickle import dump as dumpPickle, load as loadPickle, PickleError
 if (pythonIs2OrOlder): import Queue as queue
 else: import queue as queue
 
@@ -86,6 +86,7 @@ maximumNonLocalFileSize = 268435456 # 256MB
 # =============================================================================================
 
 class fileMetadata():
+
     def __init__( self ):
         self.album = placeholder
         self.artist = placeholder
@@ -142,16 +143,17 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         try: sys.stderr = sys.stdout = open(os.devnull, 'w')
         except: self._unmute()
 
-    def _logMessage( self, message, isWarning = False ):
+    def logMessage( self, message, isWarning = False ):
+        now = datetime.now()
+        prettyTime = ("{:%H:%M:%S.}".format(now) + str(now.microsecond * 1000))[:12]
         if (isWarning):
             if (self._lastWarning == message): return
             self._lastWarning = message
-            sys.stdout.write("Metanautilus-\x1B[33;1mWARNING\x1B[0;0m: ")
+            sys.__stderr__.write("Metanautilus-\x1B[33;1mWARNING\x1B[0;0m: ")
+            sys.__stderr__.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
         else:
-            sys.stdout.write("Metanautilus: ")
-        now = datetime.now()
-        prettyTime = ("{:%H:%M:%S.}".format(now) + str(now.microsecond * 1000))[:12]
-        sys.__stdout__.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
+            sys.__stdout__.write("Metanautilus: ")
+            sys.__stdout__.write("\x1B[34m" + prettyTime + "\x1B[0m: " + message + "\n")
         
     def _logException( self, exception, relatedFilePath = None ):
         traceback = sys.exc_info()[2]
@@ -160,29 +162,29 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         errorLine = str(traceback.tb_lineno)
         details = ": \x1B[3m" + errorText + "\x1B[0m at " + errorFile + ", line " + errorLine
         if (relatedFilePath is not None): details = " from '" + relatedFilePath + "'" + details
-        self._logMessage(("Error fetching metadata" + details), True)
+        self.logMessage(("Error fetching metadata" + details), True)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # MANAGING AND USING THE CACHES
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _pickleKnownMetadata( self, cacheFile ):
-        self._logMessage("Pickling currently known metadata...")
+    def pickleKnownMetadata( self, cacheFile ):
+        self.logMessage("Pickling currently known metadata...")
         self._knownMetadataMutex.acquire()
         if ((not os.path.exists(cacheFile)) or os.path.isfile(cacheFile)):
             with open(cacheFile, 'wb') as cacheHandle:
-                try: dump(self._knownFiles, cacheHandle, protocol=HIGHEST_PROTOCOL)
-                except PickleError: self._logMessage("Failed to pickle known metadata...", True)
+                try: dumpPickle(self._knownFiles, cacheHandle, protocol=2)
+                except PickleError: self.logMessage("Failed to pickle known metadata...", True)
         self._unpickledKnownFiles = 0
         self._knownMetadataMutex.release()
 
-    def _pickleKnownJunk( self, junkCacheFile ):
-        self._logMessage("Pickling list of currently known junk...")
+    def pickleKnownJunk( self, junkCacheFile ):
+        self.logMessage("Pickling list of currently known junk...")
         self._knownJunkMutex.acquire()
         if ((not os.path.exists(junkCacheFile)) or os.path.isfile(junkCacheFile)):
             with open(junkCacheFile, 'wb') as cacheHandle:
-                try: dump(self._knownJunk, cacheHandle, protocol=HIGHEST_PROTOCOL)
-                except PickleError: self._logMessage("Failed to pickle known junk list...", True)
+                try: dumpPickle(self._knownJunk, cacheHandle, protocol=2)
+                except PickleError: self.logMessage("Failed to pickle known junk list...", True)
         self._unpickledKnownFiles = 0
         self._knownJunkMutex.release()
 
@@ -192,24 +194,24 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             sleep(3)
             if (self._unpickledKnownFiles > 0):
                 if (not os.path.exists(cacheFile)):
-                    self._logMessage("Forgetting all metadata (pickle file removed)...")
+                    self.logMessage("Forgetting all metadata (pickle file removed)...")
                     self._knownMetadataMutex.acquire()
                     self._knownFiles = dict()
                     self._unpickledKnownFiles = 0
                     self._knownMetadataMutex.release()
                     with open(cacheFile, 'a'): pass
                 elif (self._unpickledKnownFiles > minFilesToCache) or ((cycle % 10) == 0):
-                    self._pickleKnownMetadata(cacheFile)
+                    self.pickleKnownMetadata(cacheFile)
             if (self._unpickledKnownJunk > 0):
                 if (not os.path.exists(junkCacheFile)):
-                    self._logMessage("Forgetting all known junk (pickle file removed)...")
+                    self.logMessage("Forgetting all known junk (pickle file removed)...")
                     self._knownJunkMutex.acquire()
                     self._knownJunk = dict()
                     self._unpickledKnownJunk = 0
                     self._knownJunkMutex.release()
                     with open(junkCacheFile, 'a'): pass
                 elif (self._unpickledKnownJunk > minFilesToCache) or ((cycle % 10) == 0):
-                    self._pickleKnownJunk(junkCacheFile)
+                    self.pickleKnownJunk(junkCacheFile)
             if (cycle == 1000): cycle = 1
             else: cycle += 1
             sleep(12)
@@ -758,7 +760,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (len(comment) > 0): metadata.comment = self._formatedString(comment)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    # FETCHING METADATA ON SPECIAL CASES
+    # DETERMINING AND USING THE PROPER FETCHING METHODS
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
         
     def _fetchNoMetadataAtAll( self, metadata, path ):
@@ -771,9 +773,23 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (mappedMethod is None): 
             mappedMethod = self._signatureToMethodMap.get(fileSignature[:4], self._fetchNoMetadataAtAll)
         mappedMethod(metadata, path)
+        
+    def _fetchMetadata( self, metadata, path, file = None ):
+        mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
+        if (mappedMethod is not None): 
+            mappedMethod(metadata, path)
+        elif (file is not None):
+            mime = file.get_mime_type()
+            mappedMethod = self._mimeToMethodMap.get(mime)
+            if (mappedMethod is not None): mappedMethod(metadata, path)
+            elif (mime.startswith('ima')): self._fetchImageMetadata(metadata, path)
+            elif (mime.startswith(('aud', 'vid'))): self._fetchAVMetadata(metadata, path)
+            else: self._fetchMagicallyIdentifiedMetadata(metadata, path)
+        else:
+            self._fetchMagicallyIdentifiedMetadata(metadata, path)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-    # CALLING THE PROPER FETCHING FUNCTIONS, THEN ASSIGNING THE METADATA TO EACH FILE
+    # ASSIGNING THE FETCHED METADATA TO EACH FILE
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
     def _assignNothingToFile( self, file ):
@@ -823,38 +839,29 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         file.add_string_attribute('year', metadata.date[:4])
         file.add_string_attribute('exif_flash', metadata.exif_flash)
 
-    def _fetchMetadataThenAssignToFile( self, file, isLocal, status, path ):
+    def _assignFetchedMetadataToFile( self, file, isLocal, status, path ):
         if (isLocal):
-            isKnownJunk = self._knownJunk.get(status.st_ino) >= status.st_mtime
-            previousMetadata = self._knownFiles.get(status.st_ino)
+            isKnownJunk = self._knownJunk.get(status.st_ino, 0) >= status.st_mtime
+            previousMetadata = self._knownFiles.get(status.st_ino, (0, None))
         else:
             isKnownJunk = status.st_size > maximumNonLocalFileSize
-            previousMetadata = None
+            previousMetadata = (0, None)
         if (isKnownJunk or (status.st_size <= 16)):
             self._assignNothingToFile(file)
-        elif ((previousMetadata is not None) and (previousMetadata[0] >= status.st_mtime)):
+        elif (previousMetadata[0] >= status.st_mtime):
             self._assignMetadataToFile(previousMetadata[1], file)
         else:
             metadata = fileMetadata()
             self._mute() # Muting to hide possible third-party complaints
             try:
-                mappedMethod = self._suffixToMethodMap.get(os.path.splitext(path)[-1][1:].lower())
-                if (mappedMethod is not None): 
-                    mappedMethod(metadata, path)
-                else:
-                    mime = file.get_mime_type()
-                    mappedMethod = self._mimeToMethodMap.get(mime)
-                    if (mappedMethod is not None): mappedMethod(metadata, path)
-                    elif (mime.startswith('ima')): self._fetchImageMetadata(metadata, path)
-                    elif (mime.startswith(('aud', 'vid'))): self._fetchAVMetadata(metadata, path)
-                    else: self._fetchMagicallyIdentifiedMetadata(metadata, path)
+                self._fetchMetadata(metadata, path, file)
             except Exception as someException:
-                self._logException(someException, path)
+                if (not isinstance(someException, IOError)): self._logException(someException, path)
                 self._assignNothingToFile(file)
             else:
-                self._unmute()
                 self._assignMetadataToFile(metadata, file)
                 if (isLocal): self._remember(metadata, status)
+            self._unmute()
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # HANDLING (PRELIMINARILY) OR SKIPPING EACH FILE
@@ -871,7 +878,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 uri = uri[2] + ',share=' + unquote(uri[3]) + '/' + unquote('/'.join(uri[4:]))
                 uri = 'smb-share:server=' + uri
                 return (self._gvfsMountpointsDir + uri)
-        self._logMessage("Unable to handle " + scheme + ":// URIs", True)
+        self.logMessage("Unable to handle " + scheme + ":// URIs", True)
         return ''
 
     def update_file_info( self, file ):
@@ -888,7 +895,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         except:
             file.add_string_attribute('inode', placeholder)
             fileType = 0
-        if (fileType == 1): self._fetchMetadataThenAssignToFile(file, isLocal, status, path)
+        if (fileType == 1): self._assignFetchedMetadataToFile(file, isLocal, status, path)
         elif (fileType == 2): self._assignNothingToFile(file) # TODO: prefetch dir's content
         else: self._assignNothingToFile(file)
 
@@ -897,7 +904,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
     def get_columns( self ):
-        self._logMessage("Adding extra columns...")
+        self.logMessage("Adding extra columns...")
         return (
             Nautilus.Column(name='Metanautilus::inode_col',        attribute='inode',
                 label="Index Node",         description="Index Node of the file"),
@@ -953,38 +960,36 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 try: 
                     mapFile = open(mapFilePath, 'r')
                 except:
-                    self._logMessage("Could not load " + mapFileName + "...", True)
+                    self.logMessage("Could not load " + mapFileName + "...", True)
                 else:
                     for line in mapFile:
-                        if ((len(line) < 8) or (line[0] == ' ')): continue
+                        if ((len(line) < 8) or (line[0] == ' ') or (line[-1] == ' ')): continue
                         keyAndMethod = line.split(' ')
                         key = eval('\'' + keyAndMethod[0] + '\'')
                         mapping[key] = eval('self.' + keyAndMethod[-1])
                     mapFile.close()
                     return mapping
-        self._logMessage("Could not find " + mapFileName + "...", True)
+        self.logMessage("Could not find " + mapFileName + "...", True)
         return mapping
 
     def _loadOrCreateCache( self, cacheDir, cacheFile, junkCacheFile ):
         if (not (os.path.exists(cacheDir) and os.path.isdir(cacheDir))):
             try: os.makedirs(name=cacheDir)
             except OSError as e:
-                if (e.errno == errno.EEXIST) and os.path.isdir(path):
-                    pass
-                else:
-                    self._logMessage("Failed to create cache folder", True)
+                if (not ((someException.errno == errno.EEXIST) and os.path.isdir(path))):
+                    self.logMessage("Failed to create cache folder", True)
                     return
-        if (os.path.exists(cacheFile) and os.path.isfile(cacheFile)):
+        if (os.path.isfile(cacheFile)):
             try:
-                with open(cacheFile, 'rb') as cacheHandle: self._knownFiles = load(cacheHandle)
+                with open(cacheFile, 'rb') as cacheHandle: self._knownFiles = loadPickle(cacheHandle)
             except EOFError:
                 self._knownFiles = dict()
         else:
             with open(cacheFile, 'a'): pass
             self._knownFiles = dict()
-        if (os.path.exists(junkCacheFile) and os.path.isfile(junkCacheFile)):
+        if (os.path.isfile(junkCacheFile)):
             try:
-                with open(junkCacheFile, 'rb') as cacheHandle: self._knownJunk = load(cacheHandle)
+                with open(junkCacheFile, 'rb') as cacheHandle: self._knownJunk = loadPickle(cacheHandle)
             except EOFError:
                 self._knownJunk = dict()
         else:
@@ -1005,7 +1010,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         pickler.start()
         
     def __init__( self ):
-        self._logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
+        self.logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
         self._lastWarning = ""
         self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
         self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
@@ -1020,4 +1025,3 @@ if (__name__ == '__main__'):
     pass #TODO
 
 # =============================================================================================
-

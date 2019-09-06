@@ -64,6 +64,8 @@ audio/x-realaudio                                                           _fet
 audio/x-vorbis+ogg                                                          _fetchAVMetadata
 audio/x-wavpack                                                             _fetchAVMetadata
 
+text/html                                                                   _fetchHTMLMetadata
+
 video/3gpp                                                                  _fetchAVMetadata
 video/3gpp2                                                                 _fetchAVMetadata
 video/mp4                                                                   _fetchAVMetadata
