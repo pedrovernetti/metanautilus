@@ -168,50 +168,50 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # MANAGING AND USING THE CACHES
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def pickleKnownMetadata( self, cacheFile ):
+    def pickleKnownMetadata( self ):
         self.logMessage("Pickling currently known metadata...")
         self._knownMetadataMutex.acquire()
-        if ((not os.path.exists(cacheFile)) or os.path.isfile(cacheFile)):
-            with open(cacheFile, 'wb') as cacheHandle:
+        if ((not os.path.exists(self._cacheFile)) or os.path.isfile(self._cacheFile)):
+            with open(self._cacheFile, 'wb') as cacheHandle:
                 try: dumpPickle(self._knownFiles, cacheHandle, protocol=2)
                 except PickleError: self.logMessage("Failed to pickle known metadata...", True)
         self._unpickledKnownFiles = 0
         self._knownMetadataMutex.release()
 
-    def pickleKnownJunk( self, junkCacheFile ):
+    def pickleKnownJunk( self ):
         self.logMessage("Pickling list of currently known junk...")
         self._knownJunkMutex.acquire()
-        if ((not os.path.exists(junkCacheFile)) or os.path.isfile(junkCacheFile)):
-            with open(junkCacheFile, 'wb') as cacheHandle:
+        if ((not os.path.exists(self._junkCacheFile)) or os.path.isfile(self._junkCacheFile)):
+            with open(self._junkCacheFile, 'wb') as cacheHandle:
                 try: dumpPickle(self._knownJunk, cacheHandle, protocol=2)
                 except PickleError: self.logMessage("Failed to pickle known junk list...", True)
         self._unpickledKnownFiles = 0
         self._knownJunkMutex.release()
 
-    def _keepKnownInformationPickled( self, cacheFile, junkCacheFile ):
+    def _keepKnownInformationPickled( self ):
         cycle = 0
         while True:
             sleep(3)
             if (self._unpickledKnownFiles > 0):
-                if (not os.path.exists(cacheFile)):
+                if (not os.path.exists(self._cacheFile)):
                     self.logMessage("Forgetting all metadata (pickle file removed)...")
                     self._knownMetadataMutex.acquire()
                     self._knownFiles = dict()
                     self._unpickledKnownFiles = 0
                     self._knownMetadataMutex.release()
-                    with open(cacheFile, 'a'): pass
+                    with open(self._cacheFile, 'a'): pass
                 elif (self._unpickledKnownFiles > minFilesToCache) or ((cycle % 10) == 0):
-                    self.pickleKnownMetadata(cacheFile)
+                    self.pickleKnownMetadata()
             if (self._unpickledKnownJunk > 0):
-                if (not os.path.exists(junkCacheFile)):
+                if (not os.path.exists(self._junkCacheFile)):
                     self.logMessage("Forgetting all known junk (pickle file removed)...")
                     self._knownJunkMutex.acquire()
                     self._knownJunk = dict()
                     self._unpickledKnownJunk = 0
                     self._knownJunkMutex.release()
-                    with open(junkCacheFile, 'a'): pass
+                    with open(self._junkCacheFile, 'a'): pass
                 elif (self._unpickledKnownJunk > minFilesToCache) or ((cycle % 10) == 0):
-                    self.pickleKnownJunk(junkCacheFile)
+                    self.pickleKnownJunk()
             if (cycle == 1000): cycle = 1
             else: cycle += 1
             sleep(12)
@@ -972,51 +972,54 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self.logMessage("Could not find " + mapFileName + "...", True)
         return mapping
 
-    def _loadOrCreateCache( self, cacheDir, cacheFile, junkCacheFile ):
-        if (not (os.path.exists(cacheDir) and os.path.isdir(cacheDir))):
-            try: os.makedirs(name=cacheDir)
-            except OSError as e:
+    def _loadOrCreateCache( self, cacheDir ):
+        self._knownFiles = dict()
+        self._knownJunk = dict()
+        if (not os.path.isdir(cacheDir)):
+            try: 
+                os.makedirs(name=cacheDir)
+            except OSError as someException:
                 if (not ((someException.errno == errno.EEXIST) and os.path.isdir(path))):
                     self.logMessage("Failed to create cache folder", True)
                     return
-        if (os.path.isfile(cacheFile)):
+        if (os.path.isfile(self._cacheFile)):
             try:
-                with open(cacheFile, 'rb') as cacheHandle: self._knownFiles = loadPickle(cacheHandle)
-            except EOFError:
-                self._knownFiles = dict()
+                with open(self._cacheFile, 'rb') as cacheHandle: 
+                    self._knownFiles = loadPickle(cacheHandle)
+            except EOFError: 
+                pass
         else:
-            with open(cacheFile, 'a'): pass
-            self._knownFiles = dict()
-        if (os.path.isfile(junkCacheFile)):
+            with open(self._cacheFile, 'a'): pass
+        if (os.path.isfile(self._junkCacheFile)):
             try:
-                with open(junkCacheFile, 'rb') as cacheHandle: self._knownJunk = loadPickle(cacheHandle)
-            except EOFError:
-                self._knownJunk = dict()
+                with open(self._junkCacheFile, 'rb') as cacheHandle: 
+                    self._knownJunk = loadPickle(cacheHandle)
+            except EOFError: 
+                pass
         else:
-            with open(junkCacheFile, 'a'): pass
-            self._knownJunk = dict()
+            with open(self._junkCacheFile, 'a'): pass
 
     def _initializeCache( self ):
         cacheDir = os.getenv("HOME") + '/.cache/metanautilus/'
-        cacheFile = cacheDir + 'known-metadata'
-        junkCacheFile = cacheDir + 'known-junk'
-        self._loadOrCreateCache(cacheDir, cacheFile, junkCacheFile)
+        self._cacheFile = cacheDir + 'known-metadata'
+        self._junkCacheFile = cacheDir + 'known-junk'
+        self._loadOrCreateCache(cacheDir)
         self._knownMetadataMutex = Lock()
         self._knownJunkMutex = Lock()
         self._unpickledKnownFiles = 0
         self._unpickledKnownJunk = 0
-        pickler = Thread(target=self._keepKnownInformationPickled, args=(cacheFile,junkCacheFile))
+        pickler = Thread(target=self._keepKnownInformationPickled)
         pickler.daemon = True
         pickler.start()
         
     def __init__( self ):
         self.logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
         self._lastWarning = ""
-        self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
-        self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
         self._suffixToMethodMap = self._loadMapping('suffixToMethod.map')
         self._mimeToMethodMap = self._loadMapping('mimeToMethod.map')
         self._signatureToMethodMap = self._loadMapping('signatureToMethod.map')
+        self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
+        self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
         self._initializeCache()
 
 # =============================================================================================
