@@ -38,8 +38,8 @@ from time import sleep
 try: from urllib import unquote
 except: from urllib import parse as unquote
 from pickle import dump as dumpPickle, load as loadPickle, PickleError
-if (pythonIs2OrOlder): import Queue as queue
-else: import queue as queue
+try: from queue import Queue as queue
+except: from queue import queue as queue
 
 # Nautilus/GI/... stuff
 from gi import require_version
@@ -82,6 +82,7 @@ maxFieldSize = 100
 minFilesToCache = 20
 ignoreNonLocalFiles = False
 maximumNonLocalFileSize = 268435456 # 256MB
+prefetchSubfolders = True
 
 # =============================================================================================
 
@@ -486,23 +487,27 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     def _fetchPDFMetadata( self, metadata, path ):
         try: document = PDFFile(path, strict=False)
         except: return
-        if (document.isEncrypted): return
-        pages = document.numPages
-        if (isinstance(pages, PDFIndirectObject)): pages = document.getObject(pages)
-        metadata.pages = self._unicode(pages)
-        info = document.documentInfo
-        author = info.get('/Author')
-        if (isinstance(author, PDFIndirectObject)): author = document.getObject(author)
-        metadata.author = self._formatedString(author) if (author is not None) else placeholder
-        company = info.get('/EBX_PUBLISHER', placeholder)
-        if (isinstance(company, PDFIndirectObject)): company = document.getObject(company)
-        metadata.company = self._formatedString(company) if (company is not None) else placeholder
-        date = info.get('/CreationDate')
-        if (isinstance(date, PDFIndirectObject)): date = document.getObject(date)
-        if (date is not None): metadata.date = self._formatedDate(date)
-        title = info.get('/Title', placeholder)
-        if (isinstance(title, PDFIndirectObject)): title = document.getObject(title)
-        metadata.title = self._formatedString(title) if (title is not None) else placeholder
+        try:
+            if (document.isEncrypted): return
+            pages = document.numPages
+            if (isinstance(pages, PDFIndirectObject)): pages = document.getObject(pages)
+            metadata.pages = self._unicode(pages)
+            info = document.documentInfo
+            if (info is None): return
+            author = info.get('/Author')
+            if (isinstance(author, PDFIndirectObject)): author = document.getObject(author)
+            metadata.author = self._formatedString(author) if (author is not None) else placeholder
+            company = info.get('/EBX_PUBLISHER', placeholder)
+            if (isinstance(company, PDFIndirectObject)): company = document.getObject(company)
+            metadata.company = self._formatedString(company) if (company is not None) else placeholder
+            date = info.get('/CreationDate')
+            if (isinstance(date, PDFIndirectObject)): date = document.getObject(date)
+            if (date is not None): metadata.date = self._formatedDate(date)
+            title = info.get('/Title', placeholder)
+            if (isinstance(title, PDFIndirectObject)): title = document.getObject(title)
+            metadata.title = self._formatedString(title) if (title is not None) else placeholder
+        except Exception as e:
+            self.logMessage(str(e) + " :: " + str(sys.exc_info()[2].tb_lineno))
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FETCHING METADATA FROM IMAGES
@@ -864,6 +869,47 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             self._unmute()
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    # PREFETCHING METADATA
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+    
+    def prefetchMetadata( self, path ):
+        try: status = os.stat(path)
+        except: return
+        if ((not os.path.isfile(path)) or (status.st_size <= 16)): return
+        if (self._knownJunk.get(status.st_ino, 0) >= status.st_mtime): return
+        if (self._knownFiles.get(status.st_ino, (0, None))[0] >= status.st_mtime): return
+        sys.__stdout__.write("Prefetching metadata from '" + path + "'\n")
+        metadata = fileMetadata()
+        self._mute() # Muting to hide possible third-party complaints
+        try: self._fetchMetadata(metadata, path, None)
+        except IOError: pass
+        except Exception as someException: self._logException(someException, path)
+        else: self._remember(metadata, status)
+        self._unmute()
+    
+    def massPrefetch( self, basePath = '/', recursively = False ):
+        if (not os.path.isdir(basePath)):
+            self.logMessage("'" + basePath + "' is not a directory", True)
+            return
+        if (basePath[-1] != '/'): basePath += '/'
+        try:
+            if (recursively):
+                for root, dirs, files in os.walk(basePath):
+                    for path in files: self.prefetchMetadata(os.path.realpath(basePath + path))
+            else:
+                for path in os.listdir(basePath): 
+                    self.prefetchMetadata(os.path.realpath(basePath + path))
+        except Exception as someException:
+            self._logException(someException, basePath)
+
+    def _keepFoldersPrefetched( self ):
+        while True:
+            folder = self._foldersToPrefetch.get()
+            if folder is None: continue
+            self.massPrefetch(folder)
+            self._foldersToPrefetch.task_done()
+
+    # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # HANDLING (PRELIMINARILY) OR SKIPPING EACH FILE
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
@@ -895,9 +941,11 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         except:
             file.add_string_attribute('inode', placeholder)
             fileType = 0
-        if (fileType == 1): self._assignFetchedMetadataToFile(file, isLocal, status, path)
-        elif (fileType == 2): self._assignNothingToFile(file) # TODO: prefetch dir's content
-        else: self._assignNothingToFile(file)
+        if (fileType == 1):
+            self._assignFetchedMetadataToFile(file, isLocal, status, path)
+        else:
+            if ((fileType == 2) and (prefetchSubfolders)): self._foldersToPrefetch.put(path)
+            self._assignNothingToFile(file)
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # ADDING THE EXTRA COLUMNS TO NAUTILUS
@@ -1012,6 +1060,12 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         pickler.daemon = True
         pickler.start()
         
+    def _initializeFoldersPrefetcher( self ):
+        self._foldersToPrefetch = queue()
+        foldersPrefetcher = Thread(target=self._keepFoldersPrefetched)
+        foldersPrefetcher.daemon = True
+        foldersPrefetcher.start()
+        
     def __init__( self ):
         self.logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
         self._lastWarning = ""
@@ -1021,6 +1075,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
         self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
         self._initializeCache()
+        self._initializeFoldersPrefetcher()
 
 # =============================================================================================
 
