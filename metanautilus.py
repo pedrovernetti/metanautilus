@@ -30,7 +30,7 @@
 # =============================================================================================
 
 # Basic stuff
-import sys, os
+import sys, os, re
 pythonIs2OrOlder = (sys.version_info.major <= 2)
 from threading import Thread, activeCount, Lock
 from datetime import datetime
@@ -56,7 +56,6 @@ from lxml import html, etree, objectify
 from zipfile import ZipFile as ZIPFile
 
 # Tools to fetch metadata from documents
-import re
 from PyPDF2 import PdfFileReader as PDFFile
 from PyPDF2.generic import IndirectObject as PDFIndirectObject
 try: from olefile import OleFileIO as OLEFile
@@ -1014,7 +1013,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                         if ((len(line) < 8) or (line[0] == ' ') or (line[-1] == ' ')): continue
                         keyAndMethod = line.split(' ')
                         key = eval('\'' + keyAndMethod[0] + '\'')
-                        mapping[key] = eval('self.' + keyAndMethod[-1])
+                        mapping[key] = eval('self._' + keyAndMethod[-1])
                     mapFile.close()
                     return mapping
         self.logMessage("Could not find " + mapFileName + "...", True)
@@ -1047,7 +1046,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         else:
             with open(self._junkCacheFile, 'a'): pass
 
-    def _initializeCache( self ):
+    def _initializeCache( self, standaloneMode ):
         cacheDir = os.getenv("HOME") + '/.cache/metanautilus/'
         self._cacheFile = cacheDir + 'known-metadata'
         self._junkCacheFile = cacheDir + 'known-junk'
@@ -1056,9 +1055,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._knownJunkMutex = Lock()
         self._unpickledKnownFiles = 0
         self._unpickledKnownJunk = 0
-        pickler = Thread(target=self._keepKnownInformationPickled)
-        pickler.daemon = True
-        pickler.start()
+        if (not standaloneMode):
+            pickler = Thread(target=self._keepKnownInformationPickled)
+            pickler.daemon = True
+            pickler.start()
         
     def _initializeFoldersPrefetcher( self ):
         self._foldersToPrefetch = queue()
@@ -1066,7 +1066,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         foldersPrefetcher.daemon = True
         foldersPrefetcher.start()
         
-    def __init__( self ):
+    def __init__( self, standaloneMode = False ):
         self.logMessage("Initializing [Python " + sys.version.partition(' (')[0] + "]")
         self._lastWarning = ""
         self._suffixToMethodMap = self._loadMapping('suffixToMethod.map')
@@ -1074,12 +1074,13 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         self._signatureToMethodMap = self._loadMapping('signatureToMethod.map')
         self._gvfsMountpointsDir = '/run/user/' + str(os.getuid()) + '/gvfs/'
         self._gvfsMountpointsDirExists = os.path.isdir(self._gvfsMountpointsDir)
-        self._initializeCache()
+        self._initializeCache(standaloneMode)
         self._initializeFoldersPrefetcher()
 
 # =============================================================================================
 
 if (__name__ == '__main__'):
     pass #TODO
-
+        
 # =============================================================================================
+

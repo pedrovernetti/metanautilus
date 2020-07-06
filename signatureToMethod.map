@@ -1,16 +1,20 @@
-\x00\x00\x00\x00ftyp                _fetchAVMetadata
-\x00\x00\x00\x20ftyp                _fetchAVMetadata
-\x1AE\xDF\xA3\x93B\x82\x880         _fetchAVMetadata
-\x1AE\xDF\xA3\xA3B\x86\x81          _fetchAVMetadata
-[Desktop                            _fetchDesktopEntryMetadata
-0\x26\xB2u\x8Ef\xCF\x11             _fetchUnspecifiedAVMetadata
-d8:annou                            _fetchTorrentMetadata
-\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1    _fetchOLECompoundFileMetadata
+\x00\x00\x00\x00ftyp                fetchAVMetadata
+\x00\x00\x00\x20ftyp                fetchAVMetadata
+\x1AE\xDF\xA3\x93B\x82\x880         fetchAVMetadata
+\x1AE\xDF\xA3\xA3B\x86\x81          fetchAVMetadata
+[Desktop                            fetchDesktopEntryMetadata
+0\x26\xB2u\x8Ef\xCF\x11             fetchUnspecifiedAVMetadata
+d8:annou                            fetchTorrentMetadata
+\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1    fetchOLECompoundFileMetadata
 
-\x25PDF                             _fetchPDFMetadata
-.RMF                                _fetchAVMetadata
-fLaC                                _fetchFLACMetadata
-MAC\x20                             _fetchAVMetadata
-MP+\x07                             _fetchAVMetadata
-MPCK                                _fetchAVMetadata
-OggS                                _fetchUnspecifiedAVMetadata
+\x25PDF                             fetchPDFMetadata
+.RMF                                fetchAVMetadata
+fLaC                                fetchFLACMetadata
+MAC\x20                             fetchAVMetadata
+MP+\x07                             fetchAVMetadata
+MPCK                                fetchAVMetadata
+OggS                                fetchUnspecifiedAVMetadata
+
+
+ 026 069 223 163 XXX 066 XXX 136 109 097 116 114 111 115 107 097 | 
+                 163 066 134 129 001 066 247 129 001 066 242 129 004 066 243 129 008 066 130 136 109 097 116 114 111 115 107 097 ]
