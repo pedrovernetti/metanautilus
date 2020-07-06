@@ -1032,7 +1032,10 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if (os.path.isfile(self._cacheFile)):
             try:
                 with open(self._cacheFile, 'rb') as cacheHandle: 
-                    self._knownFiles = loadPickle(cacheHandle)
+                    try: 
+                        self._knownFiles = loadPickle(cacheHandle)
+                    except: 
+                        with open(self._cacheFile, 'w'): pass
             except EOFError: 
                 pass
         else:
