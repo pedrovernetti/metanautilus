@@ -1,4 +1,5 @@
 #!/usr/bin/python
+#coding=utf-8
 
 # =============================================================================================
 #
@@ -50,29 +51,51 @@ GLib.threads_init()
 GObject.threads_init()
 
 # Tool to handle XML-based formats
-from lxml import html, etree, objectify
+lxmlAvailable = True
+try: from lxml import html, etree, objectify
+except: lxmlAvailable = False
 
 # Tool to handle ZIP-compressed formats
-from zipfile import ZipFile as ZIPFile
+ZipFileAvailable = True
+try: from zipfile import ZipFile as ZIPFile
+except: ZipFileAvailable = False
 
 # Tools to fetch metadata from documents
-from PyPDF2 import PdfFileReader as PDFFile
-from PyPDF2.generic import IndirectObject as PDFIndirectObject
-try: from olefile import OleFileIO as OLEFile
-except: from OleFileIO_PL import OleFileIO as OLEFile
+pyPDFAvailable = True
+OLEFileAvailable = True
+try:
+    from PyPDF2 import PdfFileReader as PDFFile
+    from PyPDF2.generic import IndirectObject as PDFIndirectObject
+except:
+    pyPDFAvailable = False
+try:
+    try: from olefile import OleFileIO as OLEFile
+    except: from OleFileIO_PL import OleFileIO as OLEFile
+except:
+    OLEFileAvailable = False
 
 # Tools to fetch metadata from audio/video
-from pymediainfo import MediaInfo
-import mutagen.id3, mutagen.apev2, mutagen.aac, mutagen.flac, mutagen.mp4, mutagen.optimfrog, mutagen.smf
-
-import mutagen.dsf, mutagen.trueaudio
+mediainfoAvailable = True
+mutagenAvailable = True
+try: from pymediainfo import MediaInfo
+except: mediainfoAvailable = False 
+try: 
+    import mutagen.id3, mutagen.apev2, mutagen.aac, mutagen.flac, mutagen.mp4, mutagen.optimfrog, mutagen.smf
+    import mutagen.dsf, mutagen.trueaudio
+except:
+    mutagenAvailable = False
 
 # Tools to fetch metadata from images
-from PIL import Image
+PILAvailable = True
+
+try: from PIL import Image
+except: PILAvailable = False
 import pyexiv2
 
 # Tools to fetch metadata from other kinds of files
-from torrentool.api import Torrent
+torrentoolAvailable = True
+try: from torrentool.api import Torrent
+except: torrentoolAvailable = False
 
 # =============================================================================================
 
@@ -544,102 +567,118 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
     # FETCHING METADATA FROM AUDIO/VIDEO
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-    def _fetchAPEv2Metadata( self, metadata, pathOrFile ):
-        try: audio = mutagen.apev2.APEv2(pathOrFile)
-        except: return
-        metadata.album = self._formatedString(audio.get('Album', [placeholder])[0])
-        metadata.artist = self._formatedStringList(audio.get('Artist', [placeholder]))
-        author = audio.get('Composer')
-        if (author is None):
-            author = audio.get('Lyricist')
-            if (author is None): author = audio.get('Writer')
-        if (author is not None): metadata.author = self._formatedStringList(author)
-        metadata.comment = self._formatedStringList(audio.get('Comment', [placeholder]))
-        metadata.company = self._formatedStringList(audio.get('Label', [placeholder]))
-        metadata.genre = self._formatedStringList(audio.get('Genre', [placeholder]))
-        metadata.title = self._formatedString(audio.get('Title', [placeholder])[0])
-        metadata.tracknumber = self._formatedTrackNumber(audio.get('Track', [placeholder])[0])
-        metadata.date = self._formatedDate(audio.get('Year', [placeholder])[0][:10])
+    if (mutagenAvailable):
+        def _fetchAPEv2Metadata( self, metadata, pathOrFile ):
+            try: audio = mutagen.apev2.APEv2(pathOrFile)
+            except: return
+            metadata.album = self._formatedString(audio.get('Album', [placeholder])[0])
+            metadata.artist = self._formatedStringList(audio.get('Artist', [placeholder]))
+            author = audio.get('Composer')
+            if (author is None):
+                author = audio.get('Lyricist')
+                if (author is None): author = audio.get('Writer')
+            if (author is not None): metadata.author = self._formatedStringList(author)
+            metadata.comment = self._formatedStringList(audio.get('Comment', [placeholder]))
+            metadata.company = self._formatedStringList(audio.get('Label', [placeholder]))
+            metadata.genre = self._formatedStringList(audio.get('Genre', [placeholder]))
+            metadata.title = self._formatedString(audio.get('Title', [placeholder])[0])
+            metadata.tracknumber = self._formatedTrackNumber(audio.get('Track', [placeholder])[0])
+            metadata.date = self._formatedDate(audio.get('Year', [placeholder])[0][:10])
+    else:
+        def _fetchAPEv2Metadata( self, metadata, pathOrFile ):
+            pass
 
-    def _fetchID3Metadata( self, metadata, pathOrFile ):
-        try: audio = mutagen.id3.ID3(pathOrFile)
-        except: return
-        metadata.album = self._formatedString(audio.get('TALB', [placeholder])[0])
-        metadata.artist = self._formatedStringList(audio.get('TPE1', [placeholder]))
-        author = audio.get('TCOM')
-        if (author is None): author = audio.get('TEXT')
-        if (author is not None): metadata.author = self._formatedStringList(author)
-        comments = [comment for comment in audio.getall('COMM') if (comment.desc == u'')]
-        if (len(comments) > 0):
-            comments = [self._unicode(comment, comment.encoding) for comment in comments]
-            metadata.comment = self._formatedStringList(comments)
-        metadata.company = self._formatedStringList(audio.get('TPUB', [placeholder]))
-        metadata.genre = self._formatedStringList(audio.get('TCON', [placeholder]))
-        metadata.title = self._formatedString(audio.get('TIT2', [placeholder])[0])
-        metadata.tracknumber = self._formatedTrackNumber(audio.get('TRCK', [placeholder])[0])
-        date = audio.get('TDRC')
-        if (date is not None): date = date[0].get_text()[:10]
-        else: date = audio.get('TYER', [placeholder])[0][:10]
-        metadata.date = self._formatedDate(date)
+    if (mutagenAvailable):
+        def _fetchID3Metadata( self, metadata, pathOrFile ):
+            try: audio = mutagen.id3.ID3(pathOrFile)
+            except: return
+            metadata.album = self._formatedString(audio.get('TALB', [placeholder])[0])
+            metadata.artist = self._formatedStringList(audio.get('TPE1', [placeholder]))
+            author = audio.get('TCOM')
+            if (author is None): author = audio.get('TEXT')
+            if (author is not None): metadata.author = self._formatedStringList(author)
+            comments = [comment for comment in audio.getall('COMM') if (comment.desc == u'')]
+            if (len(comments) > 0):
+                comments = [self._unicode(comment, comment.encoding) for comment in comments]
+                metadata.comment = self._formatedStringList(comments)
+            metadata.company = self._formatedStringList(audio.get('TPUB', [placeholder]))
+            metadata.genre = self._formatedStringList(audio.get('TCON', [placeholder]))
+            metadata.title = self._formatedString(audio.get('TIT2', [placeholder])[0])
+            metadata.tracknumber = self._formatedTrackNumber(audio.get('TRCK', [placeholder])[0])
+            date = audio.get('TDRC')
+            if (date is not None): date = date[0].get_text()[:10]
+            else: date = audio.get('TYER', [placeholder])[0][:10]
+            metadata.date = self._formatedDate(date)
+    else:
+        def _fetchID3Metadata( self, metadata, pathOrFile ):
+            pass
 
-    def _fetchUnspecifiedAVMetadata( self, metadata, path, complete = True ):
-        try: av = MediaInfo.parse(path)
-        except: return
-        general = av.tracks[0]
-        if (general.overall_bit_rate is not None): 
-            metadata.bitrate = general.overall_bit_rate
-            if (metadata.bitrate > 1024): metadata.bitrate = str(int(metadata.bitrate // 1000))
-            else: metadata.bitrate = str(int(metadata.bitrate)) + ' bps'
-        if (general.duration is not None): metadata.duration = self._formatedDuration(general.duration // 1000)
-        elif (general.other_duration is not None): metadata.duration = general.other_duration[3][:8]
-        for track in av.tracks:
-            if (track.track_type[0] == 'V'):
-                if (track.width is not None): metadata.width = str(track.width)
-                if (track.height is not None): metadata.height = str(track.height)
-            elif (track.track_type[0] == 'A'):
-                if (track.sampling_rate is not None): metadata.samplerate = str(track.sampling_rate)
-            elif (track.track_type[0] != 'G'): break
-        if (not complete): return
-        if (general.album is not None): metadata.album = self._formatedString(general.album)
-        if (general.performer is not None): metadata.artist = self._formatedString(general.performer)
-        if (general.director is not None): metadata.author = self._formatedString(general.director)
-        elif (general.composer is not None): metadata.author = self._formatedString(general.composer)
-        elif (general.lyricist is not None): metadata.author = self._formatedString(general.lyricist)
-        elif (general.writer is not None): metadata.author = self._formatedString(general.writer)
-        elif (general.writer is not None): metadata.author = self._formatedString(general.author)
-        if (general.comment is not None): metadata.comment = self._formatedString(general.comment)
-        if (general.publisher is not None): metadata.company = self._formatedString(general.publisher)
-        if (general.genre is not None): metadata.genre = self._formatedString(general.genre)
-        if (general.movie_name is not None): metadata.title = self._formatedString(general.movie_name)
-        elif (general.track_name is not None): metadata.title = self._formatedString(general.track_name)
-        elif (general.title is not None): metadata.title = self._formatedString(general.title)
-        if (general.released_date is not None): date = self._formatedString(general.released_date)
-        elif (general.recorded_date is not None): date = self._formatedString(general.recorded_date)
-        else: date = placeholder
-        metadata.date = self._formatedDate(general.released_date)
-        if (general.track_name_position is not None):
-            metadata.tracknumber = self._formatedTrackNumber(general.track_name_position)
-            
-    def _fetchFLACMetadata( self, metadata, pathOrFile ):
-        try: audio = mutagen.flac.FLAC(pathOrFile)
-        except: return
-        metadata.album = audio.get('ALBUM', [placeholder])[0]
-        metadata.artist = self._formatedStringList(audio.get('ARTIST', [placeholder]))
-        author = audio.get('COMPOSER')
-        if (author is None):
-            author = audio.get('LYRICIST')
-            if (author is None): author = audio.get('WRITER')
-        if (author is not None): metadata.author = self._formatedStringList(author)
-        metadata.bitrate = str(audio.info.bitrate // 1000)
-        metadata.comment = self._formatedStringList(audio.get('COMMENT', [placeholder]))
-        metadata.company = self._formatedStringList(audio.get('LABEL', [placeholder]))
-        metadata.duration = self._formatedDuration(audio.info.length)
-        metadata.genre = self._formatedStringList(audio.get('GENRE', [placeholder]))
-        metadata.samplerate = str(audio.info.sample_rate)
-        metadata.title = audio.get('TITLE', [placeholder])[0]
-        metadata.tracknumber = self._formatedTrackNumber(audio.get('TRACKNUMBER', [placeholder])[0])
-        date = audio.get('DATE', [placeholder])[0][:10]
-        metadata.date = self._formatedDate(date)
+    if (mediainfoAvailable):
+        def _fetchUnspecifiedAVMetadata( self, metadata, path, complete = True ):
+            try: av = MediaInfo.parse(path)
+            except: return
+            general = av.tracks[0]
+            if (general.overall_bit_rate is not None): 
+                metadata.bitrate = general.overall_bit_rate
+                if (metadata.bitrate > 1024): metadata.bitrate = str(int(metadata.bitrate // 1000))
+                else: metadata.bitrate = str(int(metadata.bitrate)) + ' bps'
+            if (general.duration is not None): metadata.duration = self._formatedDuration(general.duration // 1000)
+            elif (general.other_duration is not None): metadata.duration = general.other_duration[3][:8]
+            for track in av.tracks:
+                if (track.track_type[0] == 'V'):
+                    if (track.width is not None): metadata.width = str(track.width)
+                    if (track.height is not None): metadata.height = str(track.height)
+                elif (track.track_type[0] == 'A'):
+                    if (track.sampling_rate is not None): metadata.samplerate = str(track.sampling_rate)
+                elif (track.track_type[0] != 'G'): break
+            if (not complete): return
+            if (general.album is not None): metadata.album = self._formatedString(general.album)
+            if (general.performer is not None): metadata.artist = self._formatedString(general.performer)
+            if (general.director is not None): metadata.author = self._formatedString(general.director)
+            elif (general.composer is not None): metadata.author = self._formatedString(general.composer)
+            elif (general.lyricist is not None): metadata.author = self._formatedString(general.lyricist)
+            elif (general.writer is not None): metadata.author = self._formatedString(general.writer)
+            elif (general.writer is not None): metadata.author = self._formatedString(general.author)
+            if (general.comment is not None): metadata.comment = self._formatedString(general.comment)
+            if (general.publisher is not None): metadata.company = self._formatedString(general.publisher)
+            if (general.genre is not None): metadata.genre = self._formatedString(general.genre)
+            if (general.movie_name is not None): metadata.title = self._formatedString(general.movie_name)
+            elif (general.track_name is not None): metadata.title = self._formatedString(general.track_name)
+            elif (general.title is not None): metadata.title = self._formatedString(general.title)
+            if (general.released_date is not None): date = self._formatedString(general.released_date)
+            elif (general.recorded_date is not None): date = self._formatedString(general.recorded_date)
+            else: date = placeholder
+            metadata.date = self._formatedDate(general.released_date)
+            if (general.track_name_position is not None):
+                metadata.tracknumber = self._formatedTrackNumber(general.track_name_position)
+    else:
+        def _fetchUnspecifiedAVMetadata( self, metadata, path, complete = True ):
+            pass
+    
+    if (mutagenAvailable):
+        def _fetchFLACMetadata( self, metadata, pathOrFile ):
+            try: audio = mutagen.flac.FLAC(pathOrFile)
+            except: return
+            metadata.album = audio.get('ALBUM', [placeholder])[0]
+            metadata.artist = self._formatedStringList(audio.get('ARTIST', [placeholder]))
+            author = audio.get('COMPOSER')
+            if (author is None):
+                author = audio.get('LYRICIST')
+                if (author is None): author = audio.get('WRITER')
+            if (author is not None): metadata.author = self._formatedStringList(author)
+            metadata.bitrate = str(audio.info.bitrate // 1000)
+            metadata.comment = self._formatedStringList(audio.get('COMMENT', [placeholder]))
+            metadata.company = self._formatedStringList(audio.get('LABEL', [placeholder]))
+            metadata.duration = self._formatedDuration(audio.info.length)
+            metadata.genre = self._formatedStringList(audio.get('GENRE', [placeholder]))
+            metadata.samplerate = str(audio.info.sample_rate)
+            metadata.title = audio.get('TITLE', [placeholder])[0]
+            metadata.tracknumber = self._formatedTrackNumber(audio.get('TRACKNUMBER', [placeholder])[0])
+            date = audio.get('DATE', [placeholder])[0][:10]
+            metadata.date = self._formatedDate(date)
+    else:
+        def _fetchFLACMetadata( self, metadata, pathOrFile ):
+            pass
         
     def _fetchMIDIMetadata( self, metadata, path ):
         with open(path, 'rb') as audio:
@@ -662,29 +701,37 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 metadata.title = self._formatedStringList(names)
             if (fileTail == b'APETAGEX'): self._fetchAPEv2Metadata(metadata, audio)
         
-    def _fetchMP4Metadata( self, metadata, pathOrFile, fileSize = None ):
-        try: av = mutagen.mp4.MP4(pathOrFile)
-        except: return
-        metadata.album = av.get('\xA9alb', [placeholder])[0]
-        metadata.artist = self._formatedStringList(av.get('\xA9ART', [placeholder]))
-        metadata.author = self._formatedStringList(av.get('\xA9wrt', [placeholder]))
-        if (fileSize is not None):
-            metadata.bitrate = str(int(fileSize // (self._parsedDuration(metadata.duration) * 125)))
-        metadata.comment = self._formatedStringList(av.get('\xA9cmt', [placeholder]))
-        metadata.company = self._formatedStringList(av.get('----:com.apple.iTunes:LABEL', [placeholder]))
-        metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
-        metadata.duration = self._formatedDuration(av.info.length)
-        metadata.genre = self._formatedStringList(av.get('\xA9gen', [placeholder]))
-        metadata.samplerate = str(av.info.sample_rate)
-        metadata.title = av.get('\xA9nam', [placeholder])[0]
-        metadata.tracknumber = self._formatedTrackNumber(str(av.get('trkn', [[None]])[0][0]))
+    if (mutagenAvailable):
+        def _fetchMP4Metadata( self, metadata, pathOrFile, fileSize = None ):
+            try: av = mutagen.mp4.MP4(pathOrFile)
+            except: return
+            metadata.album = av.get('\xA9alb', [placeholder])[0]
+            metadata.artist = self._formatedStringList(av.get('\xA9ART', [placeholder]))
+            metadata.author = self._formatedStringList(av.get('\xA9wrt', [placeholder]))
+            if (fileSize is not None):
+                metadata.bitrate = str(int(fileSize // (self._parsedDuration(metadata.duration) * 125)))
+            metadata.comment = self._formatedStringList(av.get('\xA9cmt', [placeholder]))
+            metadata.company = self._formatedStringList(av.get('----:com.apple.iTunes:LABEL', [placeholder]))
+            metadata.date = self._formatedDate(av.get('\xA9day', [placeholder])[0])
+            metadata.duration = self._formatedDuration(av.info.length)
+            metadata.genre = self._formatedStringList(av.get('\xA9gen', [placeholder]))
+            metadata.samplerate = str(av.info.sample_rate)
+            metadata.title = av.get('\xA9nam', [placeholder])[0]
+            metadata.tracknumber = self._formatedTrackNumber(str(av.get('trkn', [[None]])[0][0]))
+    else:
+        def _fetchMP4Metadata( self, metadata, pathOrFile, fileSize = None ):
+            pass
 
-    def _fetchOptimFROGMetadata( self, metadata, pathOrFile ):
-        self._fetchAPEv2Metadata(metadata, pathOrFile)
-        try: OptimFROGFile = mutagen.optimfrog.OptimFROG(pathOrFile)
-        except: return
-        metadata.duration = self._formatedDuration(OptimFROGFile.info.length)
-        metadata.samplerate = str(OptimFROGFile.info.sample_rate)
+    if (mutagenAvailable):
+        def _fetchOptimFROGMetadata( self, metadata, pathOrFile ):
+            self._fetchAPEv2Metadata(metadata, pathOrFile)
+            try: OptimFROGFile = mutagen.optimfrog.OptimFROG(pathOrFile)
+            except: return
+            metadata.duration = self._formatedDuration(OptimFROGFile.info.length)
+            metadata.samplerate = str(OptimFROGFile.info.sample_rate)
+    else:
+        def _fetchOptimFROGMetadata( self, metadata, pathOrFile ):
+            pass
 
     def _fetchAVMetadata( self, metadata, path ):
         with open(path, 'rb') as avfile:
@@ -723,18 +770,22 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
             if (len(times) > 0): 
                 metadata.duration = times[-1].strip()[-12:-4]
                 metadata.bitrate = str((size // self._parsedDuration(metadata.duration)) * 8) + ' bps'
-            
-    def _fetchXSPFMetadata( self, metadata, path ):
-        with open(path, 'r') as playlist:
-            try: parsedXML = self._parsedXML(playlist)
-            except: return
-            if (parsedXML is None): return
-        field = parsedXML.find('//info')
-        if (field is None): field = parsedXML.find('//description')
-        if (field is None): field = parsedXML.find('//comment')
-        if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
-        field = parsedXML.find('//title')
-        if (field is not None): metadata.title = self._formatedString(field.text)
+    
+    if (lxmlAvailable):
+        def _fetchXSPFMetadata( self, metadata, path ):
+            with open(path, 'r') as playlist:
+                try: parsedXML = self._parsedXML(playlist)
+                except: return
+                if (parsedXML is None): return
+            field = parsedXML.find('//info')
+            if (field is None): field = parsedXML.find('//description')
+            if (field is None): field = parsedXML.find('//comment')
+            if (field is not None): metadata.comment = self._formatedHTMLPiece(field.text)
+            field = parsedXML.find('//title')
+            if (field is not None): metadata.title = self._formatedString(field.text)
+    else:
+        def _fetchXSPFMetadata( self, metadata, path ):
+            pass
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # FETCHING METADATA FROM OTHER KINDS OF FILES
@@ -749,19 +800,27 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
                 elif (line[0] == 'Comment'): metadata.comment = self._formatedString(line[1])
                 elif (line[0] == 'Categories'): metadata.genre = self._formatedStringList(line[1].split(';'))
             
-    def _fetchTorrentMetadata( self, metadata, path ):
-        try: torrent = Torrent.from_file(path)
-        except: return
-        if (torrent.created_by is not None): metadata.author = torrent.created_by
-        if (torrent.creation_date is not None): metadata.date = torrent.creation_date.isoformat()[:10]
-        if (torrent.comment is not None): metadata.comment = self._formatedString(torrent.comment)
-        if (torrent.name is not None): metadata.title = torrent.name
-        
-    def _fetchZIPMetadata( self, metadata, path ):
-        try: archive = ZIPFile(path, 'r')
-        except: return
-        comment = self._unicode(archive.comment)
-        if (len(comment) > 0): metadata.comment = self._formatedString(comment)
+    if (torrentoolAvailable):
+        def _fetchTorrentMetadata( self, metadata, path ):
+            try: torrent = Torrent.from_file(path)
+            except: return
+            if (torrent.created_by is not None): metadata.author = torrent.created_by
+            if (torrent.creation_date is not None): metadata.date = torrent.creation_date.isoformat()[:10]
+            if (torrent.comment is not None): metadata.comment = self._formatedString(torrent.comment)
+            if (torrent.name is not None): metadata.title = torrent.name
+    else:
+        def _fetchTorrentMetadata( self, metadata, path ):
+            pass
+    
+    if (ZipFileAvailable):
+        def _fetchZIPMetadata( self, metadata, path ):
+            try: archive = ZIPFile(path, 'r')
+            except: return
+            comment = self._unicode(archive.comment)
+            if (len(comment) > 0): metadata.comment = self._formatedString(comment)
+    else:
+        def _fetchZIPMetadata( self, metadata, path ):
+            pass
 
     # = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
     # DETERMINING AND USING THE PROPER FETCHING METHODS
@@ -877,7 +936,7 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
         if ((not os.path.isfile(path)) or (status.st_size <= 16)): return
         if (self._knownJunk.get(status.st_ino, 0) >= status.st_mtime): return
         if (self._knownFiles.get(status.st_ino, (0, None))[0] >= status.st_mtime): return
-        sys.__stdout__.write("Prefetching metadata from '" + path + "'\n")
+        #sys.__stdout__.write("Prefetching metadata from '" + path + "'\n")
         metadata = fileMetadata()
         self._mute() # Muting to hide possible third-party complaints
         try: self._fetchMetadata(metadata, path, None)
@@ -1084,6 +1143,43 @@ class Metanautilus( GObject.GObject, Nautilus.ColumnProvider, Nautilus.InfoProvi
 
 if (__name__ == '__main__'):
     pass #TODO
+    
+    def helpMessage():
+        exit()
+        
+    # lança o standalone mode pra dar mass-prefetch nas pastas
+    # ele gera um cache paralelo.. tipo "known-files.map.2" e morre
+    # o principal, sempre que for salvar a cache dele, procura essas paralelas geradas por standalones
+    # caso haja alguma, appends na cache in-memory do principal antes de salvá-la (tudo unificado in-mem.)
+        
+    try:
+        import psutil
+    except:
+        print("Missing dependency: psutil")
+        exit(2)
+    recursiveMode = True
+    verbose = False
+    path = None
+    for arg in sys.argv[1:]:
+        if (re.match(r'^--?h(elp)?', arg) is not None): helpMessage()
+        elif (re.match(r'^--?n(on-recursive)?$', arg) is not None): recursiveMode = False
+        elif (re.match(r'^--?v(erbose)?$', arg) is not None): verbose = True
+        elif (not os.path.isdir(arg)): helpMessage()
+        else: path = arg
+    if ('nautilus' in (p.name() for p in psutil.process_iter())):
+        try: os.system('killall nautilus')
+        except: exit()
+    standalonePrefetcher = Metanautilus(True)
+    standalonePrefetcher.verbose = verbose
+    try:
+        if (path is None): standalonePrefetcher.massPrefetch(recursively=recursiveMode)
+        else: standalonePrefetcher.massPrefetch(path, recursively=recursiveMode)
+    except:
+        standalonePrefetcher.logMessage(("Failed to prefetch metadata from '" + path + "'"), True)
+        exit(1)
+    else:
+        standalonePrefetcher.pickleKnownJunk()
+        standalonePrefetcher.pickleKnownMetadata()
         
 # =============================================================================================
 
