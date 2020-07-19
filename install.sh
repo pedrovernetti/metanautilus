@@ -62,12 +62,13 @@ if [[ "$MODE" -lt 2 ]]; then
 else
     sudo rm -vfr "$metanautilus_data_folder"
     sudo rm -vf "$extensions_folder/metanautilus.py"
-    if [[ "$MODE" -lt 4 ]]; then rm -vfr "$HOME/.cache/metanautilus"
+    if [[ "$MODE" -lt 4 ]]; then rm -vfr "$HOME/.cache/metanautilus"; fi
     if [[ "$MODE" -gt 2 ]]; then 
         # finishing
         printf "\n\033[2m[press any key to restart Nautilus]\033[0m "; read -n 1 -s; printf "\n\n"
-        nautilus -q
-        nautilus &> /dev/null &
+        sudo -u "${HOME##*/}" nautilus -q &> /dev/null &
+        sudo killall nautilus &> /dev/null
+        sudo -u "${HOME##*/}" nautilus &> /dev/null &
         printf "\033[1;32mDONE!\033[0m\n"
         exit
         fi
@@ -86,9 +87,11 @@ printf "\033[1mGiving \033[3mexecute permission\033[0;0m\033[1m to the script...
 tryDoing sudo chmod +x "$extensions_folder/metanautilus.py"
 
 # finishing
+tryDoing sudo -u "${HOME##*/}" mkdir -p "$HOME/.cache/metanautilus"
+tryDoing sudo chown -R "${HOME##*/}":"${HOME##*/}" "$HOME/.cache/metanautilus"
 printf "\n\033[2m[press any key to restart Nautilus]\033[0m "; read -n 1 -s; printf "\n\n"
-tryDoing mkdir "$HOME/.cache/metanautilus"; fi
-nautilus -q
-nautilus &> /dev/null &
+sudo -u "${HOME##*/}" nautilus -q &> /dev/null &
+sudo killall nautilus &> /dev/null
+sudo -u "${HOME##*/}" nautilus &> /dev/null &
 printf "\033[1;32mDONE!\033[0m\n"
 
