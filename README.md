@@ -57,6 +57,10 @@ Metanautilus is a python extension for [Nautilus](https://en.wikipedia.org/wiki/
 ----
 ### Installation
 
+##### Using Installer Script
+
+Run: `./install.sh` or, for a re-installation: `./install.sh --reinstall` (no `sudo`).
+
 ##### Dependencies
 
 __Metanautilus__ depends on the following third-party Python libraries/modules:
@@ -70,20 +74,12 @@ __Metanautilus__ depends on the following third-party Python libraries/modules:
  * olefile
  * torrentool
 
-##### Manual Installation Steps
-
-Run:
-
-` `
-
 ----
 ### Uninstall
 
-##### For manual installations
+##### Using Installer Script
 
-Run:
-
-` `
+Run: `./install.sh --uninstall` or, if you want to remove caches, too: `./install.sh --full-uninstall`.
 
 ----
 ### Bugs
